@@ -5,7 +5,8 @@ const jwt = require('jsonwebtoken');
 const jwtHeaderName = "x-extension-jwt";
 const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
-const request = require('request-promise');
+const request = require('request');
+const rp = require('request-promise');
 
 admin.initializeApp(functions.config().firebase);
 
@@ -129,7 +130,7 @@ exports.puckUpdate = functions.database.ref('/players/{channelId}/{opaqueUserId}
             json: true // Automatically stringifies the body to JSON
         };
 
-        rp(options);
+        return rp(options);
     });
 
 
