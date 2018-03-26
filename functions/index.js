@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const jwtHeaderName = "x-extension-jwt";
 const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
+const request = require('request-promise');
 
 admin.initializeApp(functions.config().firebase);
 
@@ -95,5 +96,46 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         return response.sendStatus(200);
     });
 });
+
+exports.puckUpdate = functions.database.ref('/players/{channelId}/{opaqueUserId}')
+    .onUpdate(event => {
+        //TODO verify JWT
+        var encodedKey = functions.config().twitch.key;
+        if (encodedKey === undefined) {
+            console.log("Sending status 500. Could not find twitch key."); // DEBUG
+            return response.sendStatus(500); // can't find twitch key, internal error
+        }
+        var token = {
+            "exp": Date.now() + 60,
+            "channel_id": channelId,
+            "pubsub_perms": {
+                send: ["*"]
+            }
+        };
+        var signedToken = jwt.sign(token, encodedKey);
+        var options = {
+            method: 'POST',
+            uri: 'https://api.twitch.tv/extensions/message/' + channelId,
+            auth: {
+                'bearer': signedToken
+            },
+            body: {
+                "content_type": "application/json",
+                "message": JSON.stringify({
+                    'puckCount': event.data.val().puckCount
+                }),
+                "targets": ["whisper-" + opaqueUserId]
+            },
+            json: true // Automatically stringifies the body to JSON
+        };
+
+        rp(options)
+            .then(function (parsedBody) {
+                response.send(200);
+            })
+            .catch(function (err) {
+                response.send(500);
+            });
+    });
 
 
