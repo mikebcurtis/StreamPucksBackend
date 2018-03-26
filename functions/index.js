@@ -67,23 +67,28 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     var verifyJsonTime = Date.now(); // DEBUG
     console.log("Verify JSON took: " + (verifyJsonTime - tokenVerifyTime)); // DEBUG
 
-    // update database
-    // first, generate a promise for each launch object
+    // update database, excluding launches that have 0 pucks or are undefined
     var launchPromises = [];
-
     for(i = 0; i < launchData.length; i++) {
-        var launchKey = launchData[i].id;
+        if (launchData[i].pucks !== undefined && launchData[i].pucks <= 0) {
+            continue;
+        }
         var newLaunch = {};
-        newLaunch['/' + launchesRoot + '/' + launchKey] = launchData[i];
-        launchPromise = db.ref().update(newLaunch).catch(reason => {
-            console.log(reason);
-            return response.sendStatus(500);
-        });
-        launchPromises.push(launchPromise);
+        newLaunch[launchData[i].id] = launchData[i];
+        launchPromises.push(
+            db.ref().child(launchesRoot).set(newLaunch).catch(reason => {
+                console.log(reason);
+                return response.sendStatus(500);
+            })
+        );
     }
 
     var generateKeyTime = Date.now(); // DEBUG
     console.log("Generating promises took: " + (generateKeyTime - verifyJsonTime)); // DEBUG
+
+    if (launchPromises.length <= 0) {
+        return response.sendStatus(200);
+    }
 
     return Promise.all(launchPromises).then((snapshot) => {
         console.log("Executing promises took: " + (Date.now() - generateKeyTime));
