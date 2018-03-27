@@ -123,14 +123,14 @@ exports.puckUpdate = functions.database.ref('/players/{channelId}/{opaqueUserId}
             },
             json: true // Automatically stringifies the body to JSON
         };
-
-        rp(options)
-            .then(function (parsedBody) {
-                response.send(200);
-            })
-            .catch(function (err) {
-                response.send(500);
-            });
+        
+        return rp(options);
+            //.then(function (parsedBody) {
+            //    response.send(200);
+            //})
+            //.catch(function (err) {
+            //    response.send(500);
+            //});
     });
 
 
