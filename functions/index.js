@@ -100,7 +100,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
 
 exports.puckUpdate = functions.database.ref('/players/{channelId}/{opaqueUserId}')
     .onWrite(event => {
-        //TODO verify JWT
+        // generate and sign JWT
         var encodedKey = functions.config().twitch.key;
         var clientId = functions.config().twitch.id;
         if (encodedKey === undefined || clientId === undefined) {
@@ -109,13 +109,17 @@ exports.puckUpdate = functions.database.ref('/players/{channelId}/{opaqueUserId}
         }
         var token = {
             "exp": Date.now() + 60,
+            "user_id": event.params.event.params.opaqueUserId,
+            "role":"external",
             "channel_id": event.params.channelId,
             "pubsub_perms": {
                 send: ["*"]
             }
         };
 
-        var signedToken = jwt.sign(token, encodedKey);
+        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true});
+
+        // send PubSub message
         var options = {
             method: 'POST',
             uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId,
