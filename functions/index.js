@@ -109,7 +109,7 @@ exports.puckUpdate = functions.database.ref('/players/{channelId}/{opaqueUserId}
         }
         var token = {
             "exp": Date.now() + 60,
-            "user_id": event.params.event.params.opaqueUserId,
+            "user_id": event.params.opaqueUserId,
             "role":"external",
             "channel_id": event.params.channelId,
             "pubsub_perms": {
