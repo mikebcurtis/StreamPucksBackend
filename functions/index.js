@@ -1,15 +1,13 @@
 const admin = require('firebase-admin');
 const functions = require('firebase-functions');
 const jwt = require('jsonwebtoken');
-//const cors = require('cors')({origin: true});
+const request = require('request');
+const rp = require('request-promise');
 const jwtHeaderName = "x-extension-jwt";
 const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
-const request = require('request');
-const rp = require('request-promise');
 
 admin.initializeApp(functions.config().firebase);
-
 var db = admin.database();
 
 exports.queueLaunch = functions.https.onRequest((request, response) => {
@@ -28,13 +26,19 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     var token = request.get(jwtHeaderName);
     if (token === undefined || token.length <= 0){
         console.log("Sending status 401. JWT is missing."); // DEBUG
-        return response.sendStatus(401); // request is missing token, unauthorized
+        return response.status(401).send("Missing signed JWT."); // request is missing token, unauthorized
     }
 
     var encodedKey = functions.config().twitch.key;
     if (encodedKey === undefined) {
         console.log("Sending status 500. Could not find twitch key."); // DEBUG
         return response.sendStatus(500); // can't find twitch key, internal error
+    }
+
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id."); // DEBUG
+        return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
     }
 
     var key = Buffer.from(encodedKey, 'base64');
@@ -51,8 +55,6 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
 
     // verify json is correct
     var launchData = request.body;
-    console.log("request body: "); // DEBUG
-    console.log(request.body); // DEBUG
 
     if (launchData.constructor !== Array) { // check if we were sent an array
         console.log("Sending status 400. The json object either didn't parse correctly or isn't an array of launch objects."); // DEBUG
@@ -78,7 +80,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         var newLaunch = {};
         newLaunch[launchData[i].id] = launchData[i];
         launchPromises.push(
-            db.ref().child(launchesRoot).set(newLaunch).catch(reason => {
+            db.ref(`${launchesRoot}/${channelId}`).set(newLaunch).catch(reason => {
                 console.log(reason);
                 return response.sendStatus(500);
             })
