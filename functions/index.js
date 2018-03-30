@@ -6,9 +6,33 @@ const rp = require('request-promise');
 const jwtHeaderName = "x-extension-jwt";
 const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
+const playersRoot = "players";
 
 admin.initializeApp(functions.config().firebase);
 var db = admin.database();
+
+var verifyJwt = function(token) {
+    if (token === undefined) {
+        return [false, 401, "Missing signed JWT."];
+    }
+
+    var encodedKey = functions.config().twitch.key;
+
+    if (encodedKey === undefined) {
+        return [false, 500, "Internal error."];
+    }
+
+    var key = Buffer.from(encodedKey, 'base64');
+    try {
+        var verification = jwt.verify(token, key);
+    }
+    catch(err) {
+        console.log("Sending status 401. Could not verify JWT."); // DEBUG
+        return [false, 401, "Sending status 401. Could not verify JWT"];
+    }
+
+    return [true];
+};
 
 exports.queueLaunch = functions.https.onRequest((request, response) => {
     var start = Date.now();
@@ -23,31 +47,23 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     }
 
     // verify JWT
-    var token = request.get(jwtHeaderName);
-    if (token === undefined || token.length <= 0){
-        console.log("Sending status 401. JWT is missing."); // DEBUG
-        return response.status(401).send("Missing signed JWT."); // request is missing token, unauthorized
+    var verifyArr = verifyJwt(request.get(jwtHeaderName));
+    if(verifyArr[0] !== true) {
+        return response.status(verifyArr[1]).send(verifyArr[2]);
     }
 
-    var encodedKey = functions.config().twitch.key;
-    if (encodedKey === undefined) {
-        console.log("Sending status 500. Could not find twitch key."); // DEBUG
-        return response.sendStatus(500); // can't find twitch key, internal error
-    }
-
+    // verify channel Id is given
     var channelId = request.query.channelId;
     if (channelId === undefined) {
         console.log("Sending status 400. Missing channel Id."); // DEBUG
         return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
     }
 
-    var key = Buffer.from(encodedKey, 'base64');
-    try {
-        var verification = jwt.verify(token, key);
-    }
-    catch(err) {
-        console.log("Sending status 401. Could not verify JWT."); // DEBUG
-        return response.sendStatus(401); // provided token was incorrect, unauthorized
+    // verify player Id is given
+    var playerId = request.query.playerId;
+    if (playerId === undefined) {
+        console.log("Sending status 400. Missing player Id."); // DEBUG
+        return response.status(400).send("Missing player Id");
     }
 
     var tokenVerifyTime = Date.now(); // DEBUG
@@ -80,7 +96,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         var newLaunch = {};
         newLaunch[launchData[i].id] = launchData[i];
         launchPromises.push(
-            db.ref(`${launchesRoot}/${channelId}`).set(newLaunch).catch(reason => {
+            db.ref(`${launchesRoot}/${channelId}/${playerId}`).set(newLaunch).catch(reason => {
                 console.log(reason);
                 return response.sendStatus(500);
             })
@@ -100,48 +116,82 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     });
 });
 
-exports.puckUpdate = functions.database.ref('/players/{channelId}/{opaqueUserId}')
-    .onWrite(event => {
-        // generate and sign JWT
-        var encodedKey = functions.config().twitch.key;
-        var clientId = functions.config().twitch.id;
-        if (encodedKey === undefined || clientId === undefined) {
-            console.log("Sending status 500. Could not find twitch key or client ID"); // DEBUG
-            return response.sendStatus(500); // can't find twitch key, internal error
+exports.puckUpdate = functions.database.ref(`/${playersRoot}/{channelId}/{opaqueUserId}`).onWrite(event => {
+    // generate and sign JWT
+    var encodedKey = functions.config().twitch.key;
+    var clientId = functions.config().twitch.id;
+    if (encodedKey === undefined || clientId === undefined) {
+        console.log("Sending status 500. Could not find twitch key or client ID"); // DEBUG
+        return response.sendStatus(500); // can't find twitch key, internal error
+    }
+    var token = {
+        "exp": Date.now() + 60,
+        "user_id": event.params.opaqueUserId,
+        "role":"external",
+        "channel_id": event.params.channelId,
+        "pubsub_perms": {
+            send: ["*"]
         }
-        var token = {
-            "exp": Date.now() + 60,
-            "user_id": event.params.opaqueUserId,
-            "role":"external",
-            "channel_id": event.params.channelId,
-            "pubsub_perms": {
-                send: ["*"]
-            }
-        };
+    };
 
-        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true});
+    var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true});
 
-        // send PubSub message
-        var options = {
-            method: 'POST',
-            uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId,
-            auth: {
-                'bearer': signedToken
-            },
-            headers: {
-                "Client-ID": clientId
-            },
-            body: {
-                "content_type": "application/json",
-                "message": JSON.stringify({
-                    'puckCount': event.data.val().puckCount
-                }),
-                "targets": ["whisper-" + event.params.opaqueUserId]
-            },
-            json: true // Automatically stringifies the body to JSON
-        };
+    // send PubSub message
+    var options = {
+        method: 'POST',
+        uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId,
+        auth: {
+            'bearer': signedToken
+        },
+        headers: {
+            "Client-ID": clientId
+        },
+        body: {
+            "content_type": "application/json",
+            "message": JSON.stringify({
+                'puckCount': event.data.val().puckCount
+            }),
+            "targets": ["whisper-" + event.params.opaqueUserId]
+        },
+        json: true // Automatically stringifies the body to JSON
+    };
 
-        return rp(options);
+    return rp(options);
+});
+
+exports.wildUserAppears = functions.https.onRequest((request, response) => {
+    // send CORS first
+    if (request.method === 'OPTIONS') {
+        console.log("Sending status 200. CORS check successful."); // DEBUG
+        return response.set('Access-Control-Allow-Origin', '*')
+        .set('Access-Control-Allow-Methods', 'GET, POST')
+        .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
+        .status(200).send();
+    }
+
+    // verify JWT
+    var verifyArr = verifyJwt(request.get(jwtHeaderName));
+    if(verifyArr[0] !== true) {
+        return response.status(verifyArr[1]).send(verifyArr[2]);
+    }
+
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id."); // DEBUG
+        return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
+    }
+
+    // verify player Id is given
+    var playerId = request.query.playerId;
+    if (playerId === undefined) {
+        console.log("Sending status 400. Missing player Id."); // DEBUG
+        return response.status(400).send("Missing player Id");
+    }
+
+    // update the last seen timestamp
+    return db.ref(`${playersRoot}/${channelId}/${playerId}`).update({ 'lastSeen': Date.now() }).catch(reason => {
+        console.log(reason);
+        return response.sendStatus(500);
     });
-
-
+});
