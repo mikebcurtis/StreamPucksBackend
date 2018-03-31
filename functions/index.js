@@ -93,10 +93,12 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         if (launchData[i].pucks !== undefined && launchData[i].pucks <= 0) {
             continue;
         }
-        var newLaunch = {};
-        newLaunch[launchData[i].id] = launchData[i];
+        //var newLaunch = {};
+        var ref = db.ref(`${launchesRoot}/${channelId}/${playerId}`);
+        var newChildRef = ref.child(launchData[i].id); //creates a ref to the child with the name of the ID
+        //newLaunch[launchData[i].id] = launchData[i];
         launchPromises.push(
-            db.ref(`${launchesRoot}/${channelId}/${playerId}`).set(newLaunch).catch(reason => {
+            newChildRef.set(launchData[i]).catch(reason => {
                 console.log(reason);
                 return response.sendStatus(500);
             })
@@ -116,7 +118,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     });
 });
 
-exports.puckUpdate = functions.database.ref(`/${playersRoot}/{channelId}/{opaqueUserId}`).onWrite(event => {
+exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite(event => {
     // generate and sign JWT
     var encodedKey = functions.config().twitch.key;
     var clientId = functions.config().twitch.id;
