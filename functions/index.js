@@ -192,7 +192,9 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     }
 
     // update the last seen timestamp
-    return db.ref(`${playersRoot}/${channelId}/${playerId}`).update({ 'lastSeen': Date.now() }).catch(reason => {
+    return db.ref(`${playersRoot}/${channelId}/${playerId}`).update({ 'lastSeen': Date.now() }).then(snapshot => {
+        return response.sendStatus(200);
+    }).catch(reason => {
         console.log(reason);
         return response.sendStatus(500);
     });
