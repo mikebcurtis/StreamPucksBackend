@@ -58,6 +58,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         console.log("Sending status 400. Missing channel Id."); // DEBUG
         return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
     }
+    channelId = channelId.trim();
 
     // verify player Id is given
     var playerId = request.query.playerId;
@@ -65,6 +66,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         console.log("Sending status 400. Missing player Id."); // DEBUG
         return response.status(400).send("Missing player Id");
     }
+    playerId = playerId.trim();
 
     var tokenVerifyTime = Date.now(); // DEBUG
     console.log("Verify token took: " + (tokenVerifyTime - start)); // DEBUG
@@ -94,11 +96,11 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
             continue;
         }
         //var newLaunch = {};
-        var ref = db.ref(`${launchesRoot}/${channelId}/${playerId}`);
-        var newChildRef = ref.child(launchData[i].id); //creates a ref to the child with the name of the ID
+        var ref = db.ref(`${launchesRoot}/${channelId}`);
+        //var newChildRef = ref.child(launchData[i]); //creates a ref to the child with the name of the ID
         //newLaunch[launchData[i].id] = launchData[i];
         launchPromises.push(
-            newChildRef.set(launchData[i]).catch(reason => {
+            ref.push().set(launchData[i]).catch(reason => {
                 console.log(reason);
                 return response.sendStatus(500);
             })
