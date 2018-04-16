@@ -138,8 +138,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
         }
     };
 
-    var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true});
-
+    var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
     // send PubSub message
     var options = {
         method: 'POST',
