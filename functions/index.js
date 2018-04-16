@@ -130,7 +130,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
     }
     var token = {
         "exp": Date.now() + 60,
-        "user_id": event.params.opaqueUserId,
+        "user_id": event.params.playerId,
         "role":"external",
         "channel_id": event.params.channelId,
         "pubsub_perms": {
@@ -139,6 +139,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
     };
 
     var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true});
+    var target = "whisper-" + event.params.playerId;
 
     // send PubSub message
     var options = {
@@ -153,12 +154,16 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
         body: {
             "content_type": "application/json",
             "message": JSON.stringify({
-                'puckCount': event.data.val().puckCount
+                "puckCount": event.data.val().puckCount
             }),
-            "targets": ["whisper-" + event.params.opaqueUserId]
+            "targets": [target]
+            //"targets": ["broadcast"]
         },
         json: true // Automatically stringifies the body to JSON
     };
 
-    return rp(options);
+    return rp(options).catch(err => {
+        console.log(err);
+        return;
+    });
 });
