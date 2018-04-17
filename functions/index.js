@@ -154,7 +154,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
         body: {
             "content_type": "application/json",
             "message": JSON.stringify({
-                "puckCount": event.data.val().puckCount
+                "puckCount": event.data.val()
             }),
             "targets": [target]
             //"targets": ["broadcast"]
