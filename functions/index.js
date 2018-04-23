@@ -158,20 +158,22 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     }
     //initialize new user data
     var channelRef = db.ref(`${playersRoot}/${channelId}`);
-    return channelRef.once('value').then(function (snapshot) {
+    return channelRef.once('value').then(snapshot => {
+        var promise;
         if (!snapshot.hasChild(playerId)) {
             var playerRef = channelRef.child(playerId);
-            playerRef.set({
-                    'points': 0,
-                    'puckCount': 30,
-                    'opaqueUserId': opaqueUserId,
-                    'lastSeen': Date.now()
-            });
+            return playerRef.set({
+                                        'points': 0,
+                                        'puckCount': 30,
+                                        'opaqueUserId': opaqueUserId,
+                                        'lastSeen': Date.now()
+                                    });
         }
         else {
             playerRef = channelRef.child(playerId);
-            playerRef.update({ 'lastSeen': Date.now() });
+            return playerRef.update({ 'lastSeen': Date.now() });
         }
+    }).then(snapshot => {
         return response.sendStatus(200);
     }).catch(reason => {
         console.log(reason);
