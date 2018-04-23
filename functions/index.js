@@ -97,6 +97,10 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         }
         //var newLaunch = {};
         var ref = db.ref(`${launchesRoot}/${channelId}`);
+        //var localOpaqueId = launchData[i].opaqueUserId;
+        //var localPlayerId = launchData[i].userId;
+        //var playerRef = db.ref('{playersRoot}/{channelId}/' + localPlayerId);
+        //playerRef.push(localOpaqueId);
         //var newChildRef = ref.child(launchData[i]); //creates a ref to the child with the name of the ID
         //newLaunch[launchData[i].id] = launchData[i];
         launchPromises.push(
@@ -120,6 +124,68 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     });
 });
 
+exports.wildUserAppears = functions.https.onRequest((request, response) => {
+    // send CORS first
+    if (request.method === 'OPTIONS') {
+        console.log("Sending status 200. CORS check successful."); // DEBUG
+        return response.set('Access-Control-Allow-Origin', '*')
+            .set('Access-Control-Allow-Methods', 'GET, POST')
+            .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
+            .status(200).send();
+    }
+    // verify JWT
+    var verifyArr = verifyJwt(request.get(jwtHeaderName));
+    if (verifyArr[0] !== true) {
+        return response.status(verifyArr[1]).send(verifyArr[2]);
+    }
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id."); // DEBUG
+        return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
+    }
+    // verify player Id is given
+    var playerId = request.query.playerId;
+    if (playerId === undefined) {
+        console.log("Sending status 400. Missing player Id."); // DEBUG
+        return response.status(400).send("Missing player Id");
+    }
+    // verify opaque user Id is given
+    var opaqueUserId = request.query.opaqueUserId;
+    if (opaqueUserId === undefined) {
+        console.log("Sending status 400. Missing opaque User Id."); // DEBUG
+        return response.status(400).send("Missing opaque User Id");
+    }
+    //initialize new user data
+    var channelRef = db.ref(`${playersRoot}/${channelId}`);
+    return channelRef.once('value').then(function (snapshot) {
+        if (!snapshot.hasChild(playerId)) {
+            var playerRef = channelRef.child(playerId);
+            playerRef.set({
+                    'points': 0,
+                    'puckCount': 30,
+                    'opaqueUserId': opaqueUserId,
+                    'lastSeen': Date.now()
+            });
+        }
+        else {
+            playerRef = channelRef.child(playerId);
+            playerRef.update({ 'lastSeen': Date.now() });
+        }
+        return response.sendStatus(200);
+    }).catch(reason => {
+        console.log(reason);
+        return response.sendStatus(500);
+    });
+    // update the last seen timestamp
+    //db.ref(`${playersRoot}/${channelId}/${playerId}`).update({ 'lastSeen': Date.now() }).then(snapshot => {
+    //    return response.sendStatus(200);
+    //}).catch(reason => {
+    //    console.log(reason);
+    //    return response.sendStatus(500);
+    //});
+});
+
 exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite(event => {
     // generate and sign JWT
     var encodedKey = functions.config().twitch.key;
@@ -130,21 +196,29 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
     }
     var token = {
         "exp": Date.now() + 60,
-        "user_id": event.params.playerId,
+        "user_id": event.params.playerId.trim(),
         "role":"external",
-        "channel_id": event.params.channelId,
+        "channel_id": event.params.channelId.trim(),
         "pubsub_perms": {
             send: ["*"]
         }
     };
-
-    var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true});
-    var target = "whisper-" + event.params.playerId;
-
+    var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
+    var opaqueRef = db.ref(`${playersRoot}/${event.params.channelId.trim()}/${event.params.playerId.trim()}/opaqueUserId`);
+    var opaqueUserId;
+    opaqueRef.on('value', function (snapshot) {
+        opaqueUserId = snapshot.val();
+        console.log(snapshot.val());
+    }, function (errorObject) {
+        console.log('Read Failed: ' + errorObject.code);
+    });
+    var target = "whisper-" + opaqueUserId;
+    console.log(target);
+    opaqueRef.off('value');
     // send PubSub message
     var options = {
         method: 'POST',
-        uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId,
+        uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId.trim(),
         auth: {
             'bearer': signedToken
         },
