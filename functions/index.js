@@ -96,7 +96,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
             continue;
         }
         //var newLaunch = {};
-        var ref = db.ref(`${launchesRoot}/${channelId}`);
+        var ref = db.ref(`${launchesRoot}/${channelId.trim()}`);
         //var localOpaqueId = launchData[i].opaqueUserId;
         //var localPlayerId = launchData[i].userId;
         //var playerRef = db.ref('{playersRoot}/{channelId}/' + localPlayerId);
@@ -157,7 +157,7 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
         return response.status(400).send("Missing opaque User Id");
     }
     //initialize new user data
-    var channelRef = db.ref(`${playersRoot}/${channelId}`);
+    var channelRef = db.ref(`${playersRoot}/${channelId.trim()}`);
     return channelRef.once('value').then(snapshot => {
         var promise;
         if (!snapshot.hasChild(playerId)) {
