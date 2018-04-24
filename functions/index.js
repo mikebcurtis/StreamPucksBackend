@@ -133,6 +133,7 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
             .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
             .status(200).send();
     }
+    
     // verify JWT
     var verifyArr = verifyJwt(request.get(jwtHeaderName));
     if (verifyArr[0] !== true) {
@@ -158,27 +159,58 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     }
     //initialize new user data
     var channelRef = db.ref(`${playersRoot}/${channelId.trim()}`);
-    return channelRef.once('value').then(snapshot => {
-        var promise;
-        if (!snapshot.hasChild(playerId)) {
-            var playerRef = channelRef.child(playerId);
+    var puckCount = 30;
+    var points = 0;
+    
+    var playerRef = db.ref(`${playersRoot}/${channelId.trim()}/${playerId}`);
+    return playerRef.once('value').then(snapshot => {
+        if (snapshot.val() === null) {
             return playerRef.set({
-                                        'points': 0,
-                                        'puckCount': 30,
+                                        'points': points,
+                                        'puckCount': puckCount,
                                         'opaqueUserId': opaqueUserId,
                                         'lastSeen': Date.now()
                                     });
         }
         else {
-            playerRef = channelRef.child(playerId);
+            puckCount = snapshot.val().puckCount;
+            points = snapshot.val().points;
             return playerRef.update({ 'lastSeen': Date.now() });
         }
     }).then(snapshot => {
-        return response.sendStatus(200);
+        var responseBody = {
+            'puckCount': 44,
+            'points': 33
+        };
+
+        return response.status(200).json(responseBody);
     }).catch(reason => {
         console.log(reason);
         return response.sendStatus(500);
     });
+
+    // return channelRef.once('value').then(snapshot => {
+    //     if (!snapshot.hasChild(playerId)) {
+    //         var playerRef = channelRef.child(playerId);
+    //         return playerRef.set({
+    //                                     'points': 0,
+    //                                     'puckCount': puckCount,
+    //                                     'opaqueUserId': opaqueUserId,
+    //                                     'lastSeen': Date.now()
+    //                                 });
+    //     }
+    //     else {
+    //         playerRef = channelRef.child(playerId);
+    //         puckCount = playerRef.child('puckCount').val();
+    //         return playerRef.update({ 'lastSeen': Date.now() });
+    //     }
+    // }).then(snapshot => {
+    //     console.log(`puckCount: ${puckCount}`);
+    //     return response.sendStatus(200);
+    // }).catch(reason => {
+    //     console.log(reason);
+    //     return response.sendStatus(500);
+    // });
     // update the last seen timestamp
     //db.ref(`${playersRoot}/${channelId}/${playerId}`).update({ 'lastSeen': Date.now() }).then(snapshot => {
     //    return response.sendStatus(200);
