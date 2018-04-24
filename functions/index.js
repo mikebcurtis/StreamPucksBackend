@@ -278,3 +278,62 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
         console.log(reason);
     });
 });
+
+exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/points').onWrite(event => {
+    // generate and sign JWT
+    var encodedKey = functions.config().twitch.key;
+    var clientId = functions.config().twitch.id;
+    if (encodedKey === undefined || clientId === undefined) {
+        console.log("Sending status 500. Could not find twitch key or client ID"); // DEBUG
+        return; // can't find twitch key, internal error
+    }
+    var token = {
+        "exp": Date.now() + 60,
+        "user_id": event.params.playerId.trim(),
+        "role": "external",
+        "channel_id": event.params.channelId.trim(),
+        "pubsub_perms": {
+            send: ["*"]
+        }
+    };
+    var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
+    var opaqueRef = db.ref(`${playersRoot}/${event.params.channelId}/${event.params.playerId}/opaqueUserId`);
+    var opaqueUserId;
+    return opaqueRef.once('value').then(snapshot => {
+        opaqueUserId = snapshot.val();
+        console.log(snapshot.val());
+
+        if (opaqueUserId === undefined) {
+            console.log("opaque user id was undefined");
+            return;
+        }
+        //return response.sendStatus(200);
+        var target = "whisper-" + opaqueUserId;
+        console.log(target);
+
+        // send PubSub message
+        var options = {
+            method: 'POST',
+            uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId.trim(),
+            auth: {
+                'bearer': signedToken
+            },
+            headers: {
+                "Client-ID": clientId
+            },
+            body: {
+                "content_type": "application/json",
+                "message": JSON.stringify({
+                    "points": event.data.val()
+                }),
+                "targets": [target]
+                //"targets": ["broadcast"]
+            },
+            json: true // Automatically stringifies the body to JSON
+        };
+
+        return rp(options);
+    }).catch(reason => {
+        console.log(reason);
+    });
+});
