@@ -115,12 +115,12 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     console.log("Generating promises took: " + (generateKeyTime - verifyJsonTime)); // DEBUG
 
     if (launchPromises.length <= 0) {
-        return response.sendStatus(200);
+        return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
     }
 
     return Promise.all(launchPromises).then((snapshot) => {
         console.log("Executing promises took: " + (Date.now() - generateKeyTime));
-        return response.sendStatus(200);
+        return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
     });
 });
 
@@ -179,45 +179,16 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
         }
     }).then(snapshot => {
         var responseBody = {
-            'puckCount': 44,
-            'points': 33
+            'puckCount': puckCount,
+            'points': points
         };
-
-        return response.status(200).json(responseBody);
+        console.log("sending the following: " + JSON.stringify(responseBody));
+        return response.set('Access-Control-Allow-Origin', '*')
+        .json(responseBody);
     }).catch(reason => {
         console.log(reason);
         return response.sendStatus(500);
     });
-
-    // return channelRef.once('value').then(snapshot => {
-    //     if (!snapshot.hasChild(playerId)) {
-    //         var playerRef = channelRef.child(playerId);
-    //         return playerRef.set({
-    //                                     'points': 0,
-    //                                     'puckCount': puckCount,
-    //                                     'opaqueUserId': opaqueUserId,
-    //                                     'lastSeen': Date.now()
-    //                                 });
-    //     }
-    //     else {
-    //         playerRef = channelRef.child(playerId);
-    //         puckCount = playerRef.child('puckCount').val();
-    //         return playerRef.update({ 'lastSeen': Date.now() });
-    //     }
-    // }).then(snapshot => {
-    //     console.log(`puckCount: ${puckCount}`);
-    //     return response.sendStatus(200);
-    // }).catch(reason => {
-    //     console.log(reason);
-    //     return response.sendStatus(500);
-    // });
-    // update the last seen timestamp
-    //db.ref(`${playersRoot}/${channelId}/${playerId}`).update({ 'lastSeen': Date.now() }).then(snapshot => {
-    //    return response.sendStatus(200);
-    //}).catch(reason => {
-    //    console.log(reason);
-    //    return response.sendStatus(500);
-    //});
 });
 
 exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite(event => {
