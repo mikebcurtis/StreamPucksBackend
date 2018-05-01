@@ -1,5 +1,5 @@
-const admin = require('firebase-admin');
 const functions = require('firebase-functions');
+const admin = require('firebase-admin');
 const jwt = require('jsonwebtoken');
 const request = require('request');
 const rp = require('request-promise');
@@ -8,7 +8,7 @@ const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
 const playersRoot = "players";
 
-admin.initializeApp(functions.config().firebase);
+admin.initializeApp();
 var db = admin.database();
 
 var verifyJwt = function(token) {
@@ -191,7 +191,7 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     });
 });
 
-exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite(event => {
+exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite((data, context) => {
     // generate and sign JWT
     var encodedKey = functions.config().twitch.key;
     var clientId = functions.config().twitch.id;
@@ -201,15 +201,15 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
     }
     var token = {
         "exp": Date.now() + 60,
-        "user_id": event.params.playerId.trim(),
+        "user_id": context.params.playerId.trim(),
         "role":"external",
-        "channel_id": event.params.channelId.trim(),
+        "channel_id": context.params.channelId.trim(),
         "pubsub_perms": {
             send: ["*"]
         }
     };
     var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
-    var opaqueRef = db.ref(`${playersRoot}/${event.params.channelId}/${event.params.playerId}/opaqueUserId`);
+    var opaqueRef = db.ref(`${playersRoot}/${context.params.channelId}/${context.params.playerId}/opaqueUserId`);
     var opaqueUserId;
     return opaqueRef.once('value').then(snapshot => {
         opaqueUserId = snapshot.val();
@@ -226,7 +226,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
         // send PubSub message
         var options = {
             method: 'POST',
-            uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId.trim(),
+            uri: 'https://api.twitch.tv/extensions/message/' + context.params.channelId.trim(),
             auth: {
                 'bearer': signedToken
             },
@@ -236,7 +236,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
             body: {
                 "content_type": "application/json",
                 "message": JSON.stringify({
-                    "puckCount": event.data.val()
+                    "puckCount": data.after.val()
                 }),
                 "targets": [target]
                 //"targets": ["broadcast"]
@@ -250,7 +250,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
     });
 });
 
-exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/points').onWrite(event => {
+exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/points').onWrite((data, context) => {
     // generate and sign JWT
     var encodedKey = functions.config().twitch.key;
     var clientId = functions.config().twitch.id;
@@ -260,15 +260,15 @@ exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{player
     }
     var token = {
         "exp": Date.now() + 60,
-        "user_id": event.params.playerId.trim(),
+        "user_id": context.params.playerId.trim(),
         "role": "external",
-        "channel_id": event.params.channelId.trim(),
+        "channel_id": context.params.channelId.trim(),
         "pubsub_perms": {
             send: ["*"]
         }
     };
     var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
-    var opaqueRef = db.ref(`${playersRoot}/${event.params.channelId}/${event.params.playerId}/opaqueUserId`);
+    var opaqueRef = db.ref(`${playersRoot}/${context.params.channelId}/${context.params.playerId}/opaqueUserId`);
     var opaqueUserId;
     return opaqueRef.once('value').then(snapshot => {
         opaqueUserId = snapshot.val();
@@ -285,7 +285,7 @@ exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{player
         // send PubSub message
         var options = {
             method: 'POST',
-            uri: 'https://api.twitch.tv/extensions/message/' + event.params.channelId.trim(),
+            uri: 'https://api.twitch.tv/extensions/message/' + context.params.channelId.trim(),
             auth: {
                 'bearer': signedToken
             },
@@ -295,7 +295,7 @@ exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{player
             body: {
                 "content_type": "application/json",
                 "message": JSON.stringify({
-                    "points": event.data.val()
+                    "points": data.after.val()
                 }),
                 "targets": [target]
                 //"targets": ["broadcast"]
