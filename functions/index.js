@@ -192,33 +192,6 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
 });
 
 
-exports.puckIncrease = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onUpdate(event => {
-    /*Increase PuckCount based on time in stream*/
-    var playerRef = db.ref(`${playersRoot}/${event.params.channelId}/${event.params.playerId}`);
-    var puckIncrease = Date.now() - db.ref(`${playersRoot}/${event.params.channelId}/${event.params.playerId}/lastSeen`).val();
-    puckIncrease /= 60000; //conversion to minutes player has been in stream
-    if (puckIncrease <= 1 && event.data.val() <= 0) {
-        var newPucks = 5;
-    }
-    else if (event.data.val() <= 0) {
-        newPucks = pucksIncrease * 5;
-    }
-    else {
-        newPucks = puckIncrease + event.data.val();
-    }
-    return playerRef.once('value').then(snapshot => {
-        var responseBody = {
-            'puckCount': newPucks
-        };
-        console.log("sending the following: " + JSON.stringify(responseBody));
-        return response.set('Access-Control-Allow-Origin', '*')
-            .json(responseBody);
-    }).catch(reason => {
-        console.log(reason);
-        return response.sendStatus(500);
-    });
-});
-
 exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite((data, context) => {
     // generate and sign JWT
     var encodedKey = functions.config().twitch.key;
