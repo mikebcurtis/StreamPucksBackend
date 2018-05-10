@@ -146,7 +146,7 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     }
     //initialize new user data
     var channelRef = db.ref(`${playersRoot}/${channelId.trim()}`);
-    var puckCount = 30;
+    var puckCount = 100;
     var points = 0;
     
     var playerRef = db.ref(`${playersRoot}/${channelId.trim()}/${playerId}`);
