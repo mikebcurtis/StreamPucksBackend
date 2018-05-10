@@ -66,9 +66,6 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
     }
     playerId = playerId.trim();
 
-    var tokenVerifyTime = Date.now(); // DEBUG
-    console.log("Verify token took: " + (tokenVerifyTime - start)); // DEBUG
-
     // verify json is correct
     var launchData = request.body;
 
