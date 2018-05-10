@@ -178,6 +178,7 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     });
 });
 
+
 exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite((data, context) => {
     // generate and sign JWT
     var encodedKey = functions.config().twitch.key;
@@ -195,6 +196,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
             send: ["*"]
         }
     };
+
     var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
     var opaqueRef = db.ref(`${playersRoot}/${context.params.channelId}/${context.params.playerId}/opaqueUserId`);
     var opaqueUserId;
@@ -236,7 +238,7 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
         return rp(options);
     }).catch(reason => {
         console.log(reason);
-    });
+        });
 });
 
 exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/points').onWrite((data, context) => {
