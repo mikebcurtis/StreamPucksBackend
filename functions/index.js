@@ -35,11 +35,9 @@ var verifyJwt = function(token) {
 };
 
 exports.queueLaunch = functions.https.onRequest((request, response) => {
-    var start = Date.now();
-
+    // CORS
     if (request.method === 'OPTIONS') {
         console.log("Sending status 200. CORS check successful."); // DEBUG
-        console.log("CORS return elapsed time: " + (Date.now() - start)); // DEBUG
         return response.set('Access-Control-Allow-Origin', '*')
         .set('Access-Control-Allow-Methods', 'GET, POST')
         .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
@@ -86,8 +84,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         }
     }
 
-    var verifyJsonTime = Date.now(); // DEBUG
-    console.log("Verify JSON took: " + (verifyJsonTime - tokenVerifyTime)); // DEBUG
+    console.log("Received: " + JSON.stringify(launchData));
 
     // update database, excluding launches that have 0 pucks or are undefined
     var launchPromises = [];
@@ -95,14 +92,8 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         if (launchData[i].pucks !== undefined && launchData[i].pucks <= 0) {
             continue;
         }
-        //var newLaunch = {};
+
         var ref = db.ref(`${launchesRoot}/${channelId.trim()}`);
-        //var localOpaqueId = launchData[i].opaqueUserId;
-        //var localPlayerId = launchData[i].userId;
-        //var playerRef = db.ref('{playersRoot}/{channelId}/' + localPlayerId);
-        //playerRef.push(localOpaqueId);
-        //var newChildRef = ref.child(launchData[i]); //creates a ref to the child with the name of the ID
-        //newLaunch[launchData[i].id] = launchData[i];
         launchPromises.push(
             ref.push().set(launchData[i]).catch(reason => {
                 console.log(reason);
@@ -111,15 +102,11 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         );
     }
 
-    var generateKeyTime = Date.now(); // DEBUG
-    console.log("Generating promises took: " + (generateKeyTime - verifyJsonTime)); // DEBUG
-
     if (launchPromises.length <= 0) {
         return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
     }
 
     return Promise.all(launchPromises).then((snapshot) => {
-        console.log("Executing promises took: " + (Date.now() - generateKeyTime));
         return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
     });
 });
@@ -182,7 +169,7 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
             'puckCount': puckCount,
             'points': points
         };
-        console.log("sending the following: " + JSON.stringify(responseBody));
+        console.log(JSON.stringify({'opaqueUserId': opaqueUserId, 'puckCount': puckCount, 'points': points}));
         return response.set('Access-Control-Allow-Origin', '*')
         .json(responseBody);
     }).catch(reason => {
@@ -221,7 +208,9 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
         }
         //return response.sendStatus(200);
         var target = "whisper-" + opaqueUserId;
-        console.log(target);
+        var messageText = JSON.stringify({
+            "puckCount": data.after.val()
+        });
     
         // send PubSub message
         var options = {
@@ -235,15 +224,15 @@ exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId
             },
             body: {
                 "content_type": "application/json",
-                "message": JSON.stringify({
-                    "puckCount": data.after.val()
-                }),
+                "message": messageText,
                 "targets": [target]
                 //"targets": ["broadcast"]
             },
             json: true // Automatically stringifies the body to JSON
         };
         
+        console.log("Sending pubsub message to " + target + ": " + messageText);
+
         return rp(options);
     }).catch(reason => {
         console.log(reason);
@@ -280,7 +269,9 @@ exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{player
         }
         //return response.sendStatus(200);
         var target = "whisper-" + opaqueUserId;
-        console.log(target);
+        var messageText = JSON.stringify({
+            "points": data.after.val()
+        });
 
         // send PubSub message
         var options = {
@@ -294,14 +285,14 @@ exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{player
             },
             body: {
                 "content_type": "application/json",
-                "message": JSON.stringify({
-                    "points": data.after.val()
-                }),
+                "message": messageText,
                 "targets": [target]
                 //"targets": ["broadcast"]
             },
             json: true // Automatically stringifies the body to JSON
         };
+
+        console.log("Sending pubsub message to " + target + ": " + messageText);
 
         return rp(options);
     }).catch(reason => {
