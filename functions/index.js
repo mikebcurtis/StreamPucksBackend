@@ -97,13 +97,16 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
                 return response.sendStatus(500);
             })
         );
+        console.log("Adding launch to database: " + JSON.stringify(launchData[i]));
     }
 
     if (launchPromises.length <= 0) {
+        console.log("No launch objects committed to database.");
         return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
     }
 
     return Promise.all(launchPromises).then((snapshot) => {
+        console.log("All launches committed to database.");
         return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
     });
 });
