@@ -178,6 +178,58 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     });
 });
 
+exports.verifyToken = functions.https.onRequest((request, response) => {
+    // verify twitch auth token is given
+    var token = request.header("Authorization");
+    if (token === undefined || token === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+    console.log("auth token: " + token);
+
+    // verify token with twitch
+    var options = {
+        method: 'GET',
+        uri: 'https://id.twitch.tv/oauth2/validate',
+        headers: {
+            "Authorization": "OAuth " + token
+        },
+        json: true
+    };
+    
+    // save token hash
+    return rp(options).then((body) => {
+        if ("login" in body && "user_id" in body) {
+            // TODO save the token hash
+            return response.status(200).send(JSON.stringify(body));
+        }
+
+        return response.status(400).send("Auth token invalid.");
+    }).catch((err) => {
+        console.log(err.message);
+        return response.status(500).send("Server error.");
+    });
+});
+
+/*
+exports.updateUsers = functions.https.onRequest((request, response) => {
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id."); // DEBUG
+        return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
+    }
+
+    // verify twitch auth token is given
+    var token = request.header("Authorization");
+    if (token === undefined || token === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+
+    // verify token
+});
+*/
 
 exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite((data, context) => {
     // generate and sign JWT
