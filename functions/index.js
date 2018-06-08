@@ -153,11 +153,12 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
     return playerRef.once('value').then(snapshot => {
         if (snapshot.val() === null) {
             return playerRef.set({
-                                        'points': points,
-                                        'puckCount': puckCount,
-                                        'opaqueUserId': opaqueUserId,
-                                        'lastSeen': Date.now()
-                                    });
+                'points': points,
+                'puckCount': puckCount,
+                'opaqueUserId': opaqueUserId,
+                'lastSeen': Date.now(),
+                'itemsPurchased': [{ 'default': 'default' }]
+                });
         }
         else {
             puckCount = snapshot.val().puckCount;
@@ -351,5 +352,116 @@ exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{player
         return rp(options);
     }).catch(reason => {
         console.log(reason);
+    });
+});
+
+exports.purchasePointsUpdate = functions.https.onRequest((request, response) => {
+    // send CORS first
+    if (request.method === 'OPTIONS') {
+        console.log("Sending status 200. CORS check successful."); // DEBUG
+        return response.set('Access-Control-Allow-Origin', '*')
+            .set('Access-Control-Allow-Methods', 'GET, POST')
+            .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
+            .status(200).send();
+    }
+
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id."); // DEBUG
+        return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
+    }
+    // verify player Id is given
+    var playerId = request.query.playerId;
+    if (playerId === undefined) {
+        console.log("Sending status 400. Missing player Id."); // DEBUG
+        return response.status(400).send("Missing player Id");
+    }
+    // verify store item is given
+    var storeItemId = request.query.storeItemId;
+    if (storeItemId === undefined) {
+        console.log("Sending status 400. Missing store Item."); // DEBUG
+        return response.status(400).send("Missing store Item");
+    }
+
+    var pointTotal;
+    var itemCost;
+    var dbRef = db.ref();
+    return dbRef.once('value').then(snapshot => {
+        //verify store item exists
+        if (!snapshot.child(`store/${storeItemId}`).exists()) {
+            console.log("Invalid Store Item");
+            return response.status(400).send("Invalid store item");
+        }
+        else if (snapshot.child(`${playersRoot}/${channelId}/${playerId}/itemsPurchased/${storeItemId}`).val() !== null) {
+            console.log("Item already purchased");
+            console.log(snapshot.child(`${playersRoot}/${channelId}/${playerId}/itemsPurchased/${storeItemId}`).val());
+            return response.set('Access-Control-Allow-Origin', '*')
+                .status(200).send("Item already Purchased");
+        }
+        else {
+            itemCost = snapshot.child(`store/${storeItemId}/cost`).val();
+        }
+        pointTotal = snapshot.child(`${playersRoot}/${channelId}/${playerId}/points`).val();
+        if (pointTotal >= itemCost) {
+            pointTotal -= itemCost;
+            var updates = {};
+            updates[`${playersRoot}/${channelId}/${playerId}/points`] = pointTotal;
+            updates[`${playersRoot}/${channelId}/${playerId}/itemsPurchased/` + storeItemId] = storeItemId;
+            dbRef.update(updates);
+            return response.set('Access-Control-Allow-Origin', '*')
+                .status(200).send("Success");
+        }
+        else {
+            console.log("Not enough points");
+            return response.status(400).send("Not enough points");
+        }
+
+    }).catch(reason => {
+        console.log(reason);
+        return response.sendStatus(500);
+    });
+});
+
+exports.populateStoreItems = functions.https.onRequest((request, response) => {
+    // send CORS first
+    if (request.method === 'OPTIONS') {
+        console.log("Sending status 200. CORS check successful."); // DEBUG
+        return response.set('Access-Control-Allow-Origin', '*')
+            .set('Access-Control-Allow-Methods', 'GET, POST')
+            .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
+            .status(200).send();
+    }
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id."); // DEBUG
+        return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
+    }
+    // verify player Id is given
+    var playerId = request.query.playerId;
+    if (playerId === undefined) {
+        console.log("Sending status 400. Missing player Id."); // DEBUG
+        return response.status(400).send("Missing player Id");
+    }
+    //// verify JWT
+    //var verifyArr = verifyJwt(request.get(jwtHeaderName));
+    //if (verifyArr[0] !== true) {
+    //    return response.status(verifyArr[1]).send(verifyArr[2]);
+    //}
+
+        var itemsJSON;
+        var purchasedItems;
+    var dbRef = db.ref();
+    return dbRef.once('value').then(snapshot => {
+        itemsJSON = snapshot.child('store').val();
+        purchasedItems = snapshot.child(`${playersRoot}/${channelId}/${playerId}/itemsPurchased`).val();
+        if (purchasedItems !== null) {
+            itemsJSON.push(purchasedItems);
+        }
+        return response.set('Access-Control-Allow-Origin', '*')
+            .json(itemsJSON);
+    }).catch(reason => {
+        return response.sendStatus(500);
     });
 });
