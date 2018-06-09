@@ -182,20 +182,12 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
 });
 
 exports.verifyToken = functions.https.onRequest((request, response) => {
-    // verify channel Id is given
-    var channelId = request.query.channelId;
-    if (channelId === undefined) {
-        console.log("Sending status 400. Missing channel Id.");
-        return response.status(400).send("Missing channel Id.");
-    }
-
     // verify twitch auth token is given
     var token = request.header("Authorization");
     if (token === undefined || token === "") {
         console.log("Sending status 400. Missing auth token.");
         return response.status(400).send("Missing auth token.");
     }
-    console.log("auth token: " + token);
 
     // verify token with twitch
     var options = {
@@ -207,15 +199,15 @@ exports.verifyToken = functions.https.onRequest((request, response) => {
         json: true
     };
     
-    var ref = db.ref(`${tokensRoot}/${channelId}`);
     var tokenSalt = functions.config().streampucks.tokensalt;
 
     return rp(options).then((body) => {
-        if ("login" in body && "user_id" in body && channelId === body.user_id) {
+        if ("login" in body && "user_id" in body) {
             // save the token hash
+            var ref = db.ref(`${tokensRoot}/${body.user_id}`);
             var hashObj = {
-                hash: md5(channelId + token + tokenSalt),
-                lastValidated: Date.now                
+                hash: md5(body.user_id + token + tokenSalt),
+                lastValidated: Date.now()                
             };
             return ref.set(hashObj).then(((resBody) => {
                 hashObj.login = body.login;
