@@ -3,10 +3,12 @@ const admin = require('firebase-admin');
 const jwt = require('jsonwebtoken');
 const request = require('request');
 const rp = require('request-promise');
+const md5 = requre('js-md5');
 const jwtHeaderName = "x-extension-jwt";
 const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
 const playersRoot = "players";
+const tokensRoot = "tokens";
 
 admin.initializeApp();
 var db = admin.database();
@@ -180,6 +182,13 @@ exports.wildUserAppears = functions.https.onRequest((request, response) => {
 });
 
 exports.verifyToken = functions.https.onRequest((request, response) => {
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id.");
+        return response.status(400).send("Missing channel Id.");
+    }
+
     // verify twitch auth token is given
     var token = request.header("Authorization");
     if (token === undefined || token === "") {
@@ -198,11 +207,25 @@ exports.verifyToken = functions.https.onRequest((request, response) => {
         json: true
     };
     
-    // save token hash
+    var ref = db.ref(`${tokensRoot}/${channelId}`);
+    var tokenSalt = functions.config().streampucks.tokensalt;
+
     return rp(options).then((body) => {
-        if ("login" in body && "user_id" in body) {
-            // TODO save the token hash
-            return response.status(200).send(JSON.stringify(body));
+        if ("login" in body && "user_id" in body && channelId == body.user_id) {
+            // save the token hash
+            var hashObj = {
+                hash: md5(channelId + token + tokenSalt),
+                lastValidated: Date.now                
+            };
+            return ref.set(hashObj).then(((resBody) => {
+                hashObj.login = body.login;
+                hashObj.user_id = body.user_id;
+                response.status(200).send(JSON.stringify(hashObj));
+            })).catch((errBody) => {
+                console.log("Failed to set token hash.");
+                console.log(err.message);
+                return response.status(500).status("Server error.");
+            });
         }
 
         return response.status(400).send("Auth token invalid.");
