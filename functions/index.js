@@ -3,7 +3,7 @@ const admin = require('firebase-admin');
 const jwt = require('jsonwebtoken');
 const request = require('request');
 const rp = require('request-promise');
-const md5 = requre('js-md5');
+const md5 = require('js-md5');
 const jwtHeaderName = "x-extension-jwt";
 const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
@@ -211,7 +211,7 @@ exports.verifyToken = functions.https.onRequest((request, response) => {
     var tokenSalt = functions.config().streampucks.tokensalt;
 
     return rp(options).then((body) => {
-        if ("login" in body && "user_id" in body && channelId == body.user_id) {
+        if ("login" in body && "user_id" in body && channelId === body.user_id) {
             // save the token hash
             var hashObj = {
                 hash: md5(channelId + token + tokenSalt),
@@ -220,7 +220,7 @@ exports.verifyToken = functions.https.onRequest((request, response) => {
             return ref.set(hashObj).then(((resBody) => {
                 hashObj.login = body.login;
                 hashObj.user_id = body.user_id;
-                response.status(200).send(JSON.stringify(hashObj));
+                return response.status(200).send(JSON.stringify(hashObj));
             })).catch((errBody) => {
                 console.log("Failed to set token hash.");
                 console.log(err.message);
