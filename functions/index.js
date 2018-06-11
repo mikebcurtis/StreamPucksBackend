@@ -13,6 +13,10 @@ const tokensRoot = "tokens";
 admin.initializeApp();
 var db = admin.database();
 
+function InvalidHashException() {
+    this.message = "Invalid hash given.";
+}
+
 var verifyJwt = function(token) {
     if (token === undefined) {
         return [false, 401, "Missing signed JWT."];
@@ -224,6 +228,77 @@ exports.verifyToken = functions.https.onRequest((request, response) => {
     }).catch((err) => {
         console.log(err.message);
         return response.status(500).send("Server error.");
+    });
+});
+
+exports.deleteLaunches = functions.https.onRequest((request, response) => {
+    // verify hash was given
+    var givenHash = request.header("Authorization");
+    if (givenHash === undefined || givenHash === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id.");
+        return response.status(400).send("Missing channel Id.");
+    }
+
+    // verify json is correct
+    var deleteAll = false;
+    if (request.body.hasOwnProperty('deleteAll') && request.body.deleteAll === true) {
+        deleteAll = true;
+    }
+    else if (request.body.hasOwnProperty('launchids') && request.body.launchids.constructor !== Array) { // check if we were sent an array
+        console.log("Sending status 400. Invalid JSON.");
+        console.log(request.body); // DEBUG
+        return response.status(400).send('Invalid JSON. Must be an array of launch ids.');
+    }
+    else if (request.body.hasOwnProperty('deleteAll') === false && request.body.hasOwnProperty('launchids') === false) {
+        console.log("Sending status 400. Invalid JSON.");
+        console.log(request.body); // DEBUG
+        return response.status(400).send('Invalid JSON. Must be an array of launch ids.');
+    }
+
+    var launchIds = request.body.launchids;
+
+    // verify hash is valid
+    var hashRef = db.ref(`${tokensRoot}/${channelId}/hash`);
+    var launchesRef = db.ref(`${launchesRoot}/${channelId}`);
+    return hashRef.once('value').then((snapshot) => {
+        var hash = snapshot.val();
+        if (givenHash === hash) {
+            return launchesRef.once('value');
+        }
+
+        throw new InvalidHashException();
+    }).then((snapshot) => { // hash is valid, delete launches
+        if (deleteAll) {
+            console.log(`Deleting all launches for ${channelId}.`); // DEBUG
+            return launchesRef.remove();
+        }
+
+        var updates = {};
+        for (var key in snapshot.val()) {
+            if (launchIds.indexOf(key) !== -1) {
+                updates[key] = null;
+            }
+        }
+
+        return launchesRef.update(updates);
+    }).then((snapshot) => {
+        console.log("sending 200"); // DEBUG
+        return response.sendStatus(200);
+    }).catch((err) => {
+        console.log(err.message);
+        if (err.message === "Invalid hash given.") {
+            return response.sendStatus(401);
+        }
+        else {
+            return response.sendStatus(500);
+        }
     });
 });
 
