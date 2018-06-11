@@ -17,6 +17,10 @@ function InvalidHashException() {
     this.message = "Invalid hash given.";
 }
 
+function InternalServerErrorException() {
+    this.message = "Server error.";
+}
+
 var verifyJwt = function(token) {
     if (token === undefined) {
         return [false, 401, "Missing signed JWT."];
@@ -302,26 +306,117 @@ exports.deleteLaunches = functions.https.onRequest((request, response) => {
     });
 });
 
-/*
 exports.updateUsers = functions.https.onRequest((request, response) => {
-    // verify channel Id is given
-    var channelId = request.query.channelId;
-    if (channelId === undefined) {
-        console.log("Sending status 400. Missing channel Id."); // DEBUG
-        return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
-    }
-
-    // verify twitch auth token is given
-    var token = request.header("Authorization");
-    if (token === undefined || token === "") {
+    // verify hash was given
+    var givenHash = request.header("Authorization");
+    if (givenHash === undefined || givenHash === "") {
         console.log("Sending status 400. Missing auth token.");
         return response.status(400).send("Missing auth token.");
     }
 
-    // verify token
-});
-*/
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id.");
+        return response.status(400).send("Missing channel Id.");
+    }
 
+    // verify body is valid and build updates
+    var givenPlayerInfo = request.body;
+    var updates = {};
+    if (givenPlayerInfo === undefined || givenPlayerInfo === "" || typeof givenPlayerInfo !== 'object') {
+        return response.status(400).send("Missing or malformed updated player info.");
+    }
+
+    for(var key in givenPlayerInfo) {
+        var hasUpdate = false;
+        var tmp = {};
+        if (givenPlayerInfo[key].hasOwnProperty('puckCount')) {
+            if (isNaN(givenPlayerInfo.puckCount)) {
+                return response.status(400).send("Puck count must be a number.");
+            }
+            tmp.puckCount = givenPlayerInfo.puckCount;
+            hasUpdate = true;
+        }
+        if (givenPlayerInfo[key].hasOwnProperty('points')) {
+            if (isNaN(givenPlayerInfo.points)) {
+                return response.status(400).send("Points must be a number.");
+            }
+            tmp.points = givenPlayerInfo.points;
+            hasUpdate = true;
+        }
+
+        if (hasUpdate) {
+            updates[key] = tmp;
+        }
+    }
+
+    // verify hash is valid
+    var hashRef = db.ref(`${tokensRoot}/${channelId}/hash`);
+    var playersRef = db.ref(`${playersRoot}/${channelId}`);
+
+    return hashRef.once('value').then((snapshot) => {
+        var hash = snapshot.val();
+        if (givenHash === hash) {
+            return playersRef.update(updates);
+        }
+
+        throw new InvalidHashException();
+    }).then((snapshot) => {
+        // send pubsub message with update
+        // generate and sign JWT
+        var encodedKey = functions.config().twitch.key;
+        var clientId = functions.config().twitch.id;
+        if (encodedKey === undefined || clientId === undefined) {
+            console.log("Sending status 500. Could not find twitch key or client ID"); // DEBUG
+            throw new InternalServerErrorException();
+        }
+
+        var token = {
+            "exp": Date.now() + 60,
+            "user_id": context.params.playerId.trim(),
+            "role":"external",
+            "channel_id": context.params.channelId.trim(),
+            "pubsub_perms": {
+                send: ["*"]
+            }
+        };
+        
+        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
+        var messageText = JSON.stringify(updates);
+    
+        // send PubSub message
+        var options = {
+            method: 'POST',
+            uri: 'https://api.twitch.tv/extensions/message/' + context.params.channelId.trim(),
+            auth: {
+                'bearer': signedToken
+            },
+            headers: {
+                "Client-ID": clientId
+            },
+            body: {
+                "content_type": "application/json",
+                "message": messageText,
+                "targets": ["broadcast"]
+            },
+            json: true // Automatically stringifies the body to JSON
+        };
+
+        return rp(options);        
+    }).then((snapshot) => {
+        return response.sendStatus(200);
+    }).catch((err) => {
+        console.log(err.message);
+        if (err.message === "Invalid hash given.") {
+            return response.sendStatus(401);
+        }
+        else {
+            return response.sendStatus(500);
+        }
+    });
+});
+/*
 exports.puckUpdate = functions.database.ref('{playersRoot}/{channelId}/{playerId}/puckCount').onWrite((data, context) => {
     // generate and sign JWT
     var encodedKey = functions.config().twitch.key;
@@ -444,7 +539,7 @@ exports.pointsUpdate = functions.database.ref('{playersRoot}/{channelId}/{player
         console.log(reason);
     });
 });
-
+*/
 exports.purchasePointsUpdate = functions.https.onRequest((request, response) => {
     // send CORS first
     if (request.method === 'OPTIONS') {
