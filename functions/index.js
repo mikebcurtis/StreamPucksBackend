@@ -325,6 +325,7 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
     var givenPlayerInfo = request.body;
     var updates = {};
     if (givenPlayerInfo === undefined || givenPlayerInfo === "" || typeof givenPlayerInfo !== 'object') {
+        console.log("Missing or malformed updated player info."); // DEBUG
         return response.status(400).send("Missing or malformed updated player info.");
     }
 
@@ -332,17 +333,17 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
         var hasUpdate = false;
         var tmp = {};
         if (givenPlayerInfo[key].hasOwnProperty('puckCount')) {
-            if (isNaN(givenPlayerInfo.puckCount)) {
+            if (isNaN(givenPlayerInfo[key].puckCount)) {
                 return response.status(400).send("Puck count must be a number.");
             }
-            tmp.puckCount = givenPlayerInfo.puckCount;
+            tmp.puckCount = givenPlayerInfo[key].puckCount;
             hasUpdate = true;
         }
         if (givenPlayerInfo[key].hasOwnProperty('points')) {
-            if (isNaN(givenPlayerInfo.points)) {
+            if (isNaN(givenPlayerInfo[key].points)) {
                 return response.status(400).send("Points must be a number.");
             }
-            tmp.points = givenPlayerInfo.points;
+            tmp.points = givenPlayerInfo[key].points;
             hasUpdate = true;
         }
 
@@ -368,15 +369,14 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
         var encodedKey = functions.config().twitch.key;
         var clientId = functions.config().twitch.id;
         if (encodedKey === undefined || clientId === undefined) {
-            console.log("Sending status 500. Could not find twitch key or client ID"); // DEBUG
+            console.log("Sending status 500. Could not find twitch key or client ID");
             throw new InternalServerErrorException();
         }
 
         var token = {
             "exp": Date.now() + 60,
-            "user_id": context.params.playerId.trim(),
             "role":"external",
-            "channel_id": context.params.channelId.trim(),
+            "channel_id": channelId.trim(),
             "pubsub_perms": {
                 send: ["*"]
             }
@@ -388,7 +388,7 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
         // send PubSub message
         var options = {
             method: 'POST',
-            uri: 'https://api.twitch.tv/extensions/message/' + context.params.channelId.trim(),
+            uri: 'https://api.twitch.tv/extensions/message/' + channelId.trim(),
             auth: {
                 'bearer': signedToken
             },
