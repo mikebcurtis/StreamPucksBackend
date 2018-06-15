@@ -459,7 +459,7 @@ exports.purchasePointsUpdate = functions.https.onRequest((request, response) => 
             console.log("Item already purchased");
             console.log(snapshot.child(`${playersRoot}/${channelId}/${playerId}/itemsPurchased/${storeItemId}`).val());
             return response.set('Access-Control-Allow-Origin', '*')
-                .status(200).send("Item already Purchased");
+                .status(400).send("Item already Purchased");
         }
         else {
             itemCost = snapshot.child(`store/${storeItemId}/cost`).val();
@@ -476,7 +476,8 @@ exports.purchasePointsUpdate = functions.https.onRequest((request, response) => 
         }
         else {
             console.log("Not enough points");
-            return response.status(400).send("Not enough points");
+            return response.set('Access-Control-Allow-Origin', '*')
+                .status(400).send("Not enough points");
         }
 
     }).catch(reason => {
@@ -512,18 +513,19 @@ exports.populateStoreItems = functions.https.onRequest((request, response) => {
     //    return response.status(verifyArr[1]).send(verifyArr[2]);
     //}
 
-        var itemsJSON;
-        var purchasedItems;
+    var itemsJSON;
+    var purchasedItems;
     var dbRef = db.ref();
     return dbRef.once('value').then(snapshot => {
-        itemsJSON = snapshot.child('store').val();
+        itemsJSON = { store: snapshot.child('store').val() };
         purchasedItems = snapshot.child(`${playersRoot}/${channelId}/${playerId}/itemsPurchased`).val();
-        if (purchasedItems !== null) {
-            itemsJSON.push(purchasedItems);
+        if (purchasedItems !== undefined) {
+            itemsJSON.itemsPurchased = purchasedItems;
         }
         return response.set('Access-Control-Allow-Origin', '*')
-            .json(itemsJSON);
+            .status(200).json(itemsJSON);
     }).catch(reason => {
-        return response.sendStatus(500);
+        return response.set('Access-Control-Allow-Origin', '*')
+            .status(500).send(reason);
     });
 });
