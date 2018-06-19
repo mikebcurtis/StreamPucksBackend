@@ -459,7 +459,7 @@ exports.purchasePointsUpdate = functions.https.onRequest((request, response) => 
             console.log("Item already purchased");
             console.log(snapshot.child(`${playersRoot}/${channelId}/${playerId}/itemsPurchased/${storeItemId}`).val());
             return response.set('Access-Control-Allow-Origin', '*')
-                .status(400).send("Item already Purchased");
+                .status(410).send("Item already Purchased");
         }
         else {
             itemCost = snapshot.child(`store/${storeItemId}/cost`).val();
