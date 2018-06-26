@@ -322,6 +322,7 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
     }
 
     // verify body is valid and build updates
+    var updatePromises = [];
     var givenPlayerInfo = request.body;
     var updates = {};
     if (givenPlayerInfo === undefined || givenPlayerInfo === "" || typeof givenPlayerInfo !== 'object') {
@@ -349,6 +350,8 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
 
         if (hasUpdate) {
             updates[key] = tmp;
+            var tmpRef = db.ref(`${playersRoot}/${channelId}/${key}`);
+            updatePromises.push(tmpRef.update(tmp));
         }
     }
 
@@ -359,7 +362,8 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
     return hashRef.once('value').then((snapshot) => {
         var hash = snapshot.val();
         if (givenHash === hash) {
-            return playersRef.update(updates);
+            //return playersRef.update(updates);
+            return Promise.all(updatePromises);
         }
 
         throw new InvalidHashException();
