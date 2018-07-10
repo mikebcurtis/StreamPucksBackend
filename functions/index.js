@@ -476,7 +476,7 @@ exports.purchasePointsUpdate = functions.https.onRequest((request, response) => 
             updates[`${playersRoot}/${channelId}/${playerId}/itemsPurchased/` + storeItemId] = storeItemId;
             dbRef.update(updates);
             return response.set('Access-Control-Allow-Origin', '*')
-                .status(200).send("Success");
+                .status(200).send("" + pointTotal);
         }
         else {
             console.log("Not enough points");
