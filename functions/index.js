@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const request = require('request');
 const rp = require('request-promise');
 const md5 = require('js-md5');
+const twilio_client = require('twilio')(functions.config().twilio.sid, functions.config().twilio.auth);
 const jwtHeaderName = "x-extension-jwt";
 const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
@@ -19,6 +20,38 @@ function InvalidHashException() {
 
 function InternalServerErrorException() {
     this.message = "Server error.";
+}
+
+function SendPlayAlertSMS(channelId) {
+    // if (channelId === undefined) {
+    //     return;
+    // }
+
+    // check if channel is blacklisted from alerts
+    // var blacklist = JSON.parse(functions.config().twilio.blacklist);
+
+    // if (blacklist === undefined) {
+    //     return;
+    // }
+    
+    // var blacklisted = false;
+    // blacklist.some(channel => {
+    //     if(channel === channelId) {
+    //         blacklisted = true;
+    //     }
+    //     return blacklisted;
+    // });
+
+    // if (blacklisted) {
+    //     return;
+    // }
+
+    // send sms
+    return twilio_client.messages.create({
+        body: `Channel ${channelId} just started playing Stream Pucks.`,
+        from: functions.config().twilio.phone_from,
+        to: functions.config().twilio.phone_to
+    }).done();
 }
 
 var verifyJwt = function(token) {
@@ -293,7 +326,8 @@ exports.deleteLaunches = functions.https.onRequest((request, response) => {
 
         return launchesRef.update(updates);
     }).then((snapshot) => {
-        console.log("sending 200"); // DEBUG
+        return SendPlayAlertSMS(channelId);
+    }).then((snapshot) => {
         return response.sendStatus(200);
     }).catch((err) => {
         console.log(err.message);
