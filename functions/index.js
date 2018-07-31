@@ -23,35 +23,41 @@ function InternalServerErrorException() {
 }
 
 function SendPlayAlertSMS(channelId) {
-    // if (channelId === undefined) {
-    //     return;
-    // }
+    if (channelId === undefined) {
+        return new Promise((resolve, reject) => {
+            resolve();
+        });
+    }
 
     // check if channel is blacklisted from alerts
-    // var blacklist = JSON.parse(functions.config().twilio.blacklist);
+    var blacklist = JSON.parse(functions.config().twilio.blacklist);
 
-    // if (blacklist === undefined) {
-    //     return;
-    // }
+    if (blacklist === undefined) {
+        return new Promise((resolve, reject) => {
+            resolve();
+        });
+    }
     
-    // var blacklisted = false;
-    // blacklist.some(channel => {
-    //     if(channel === channelId) {
-    //         blacklisted = true;
-    //     }
-    //     return blacklisted;
-    // });
+    var blacklisted = false;
+    blacklist.some(channel => {
+        if(channel === channelId) {
+            blacklisted = true;
+        }
+        return blacklisted;
+    });
 
-    // if (blacklisted) {
-    //     return;
-    // }
+    if (blacklisted) {
+        return new Promise((resolve, reject) => {
+            resolve();
+        });
+    }
 
     // send sms
     return twilio_client.messages.create({
         body: `Channel ${channelId} just started playing Stream Pucks.`,
         from: functions.config().twilio.phone_from,
         to: functions.config().twilio.phone_to
-    }).done();
+    });
 }
 
 var verifyJwt = function(token) {
