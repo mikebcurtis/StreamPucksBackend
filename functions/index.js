@@ -6,7 +6,6 @@ const rp = require('request-promise');
 const md5 = require('js-md5');
 const twilio_client = require('twilio')(functions.config().twilio.sid, functions.config().twilio.auth);
 const jwtHeaderName = "x-extension-jwt";
-const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
 const playersRoot = "players";
 const tokensRoot = "tokens";
@@ -60,6 +59,16 @@ function SendPlayAlertSMS(channelId) {
     });
 }
 
+function tryVerify(token, key) {
+    try {
+        var verification = jwt.verify(token, key);
+        return true;
+    }
+    catch (err) {
+        return false;
+    }
+}
+
 var verifyJwt = function(token) {
     if (token === undefined) {
         return [false, 401, "Missing signed JWT."];
@@ -72,12 +81,19 @@ var verifyJwt = function(token) {
     }
 
     var key = Buffer.from(encodedKey, 'base64');
-    try {
-        var verification = jwt.verify(token, key);
-    }
-    catch(err) {
-        console.log("Sending status 401. Could not verify JWT."); // DEBUG
-        return [false, 401, "Sending status 401. Could not verify JWT"];
+    if (tryVerify(token, key) === false) {
+        // first key failed, try with second key
+        var encodedKey2 = functions.config().twitch.key2;
+        if (encodedKey2 === undefined) {
+            return [false, 500, "Internal error."];
+        }
+
+        key = Buffer.from(encodedKey2, 'base64');
+        if (tryVerify(token, key) === false) {
+            // both tokens failed
+            console.log("Sending status 401. Could not verify JWT."); // DEBUG
+            return [false, 401, "Sending status 401. Could not verify JWT"];
+        }
     }
 
     return [true];
