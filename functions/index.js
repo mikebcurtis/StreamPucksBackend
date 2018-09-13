@@ -362,6 +362,47 @@ exports.deleteLaunches = functions.https.onRequest((request, response) => {
     });
 });
 
+function sendPubSubBroadcast(encodedKey, clientId, channelId, payload) {
+        // send pubsub message with update
+        // generate and sign JWT
+        if (encodedKey === undefined || clientId === undefined) {
+            console.log("Sending status 500. Could not find twitch key or client ID");
+            throw new InternalServerErrorException();
+        }
+
+        var token = {
+            "exp": Date.now() + 60,
+            "role":"external",
+            "channel_id": channelId.trim(),
+            "pubsub_perms": {
+                send: ["*"]
+            }
+        };
+        
+        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
+        var messageText = JSON.stringify(payload);
+    
+        // send PubSub message
+        var options = {
+            method: 'POST',
+            uri: 'https://api.twitch.tv/extensions/message/' + channelId.trim(),
+            auth: {
+                'bearer': signedToken
+            },
+            headers: {
+                "Client-ID": clientId
+            },
+            body: {
+                "content_type": "application/json",
+                "message": messageText,
+                "targets": ["broadcast"]
+            },
+            json: true // Automatically stringifies the body to JSON
+        };
+
+        return rp(options); 
+}
+
 exports.updateUsers = functions.https.onRequest((request, response) => {
     // verify hash was given
     var givenHash = request.header("Authorization");
@@ -424,46 +465,22 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
 
         throw new InvalidHashException();
     }).then((snapshot) => {
-        // send pubsub message with update
-        // generate and sign JWT
-        var encodedKey = functions.config().twitch.key;
-        var clientId = functions.config().twitch.id;
-        if (encodedKey === undefined || clientId === undefined) {
-            console.log("Sending status 500. Could not find twitch key or client ID");
-            throw new InternalServerErrorException();
-        }
-
-        var token = {
-            "exp": Date.now() + 60,
-            "role":"external",
-            "channel_id": channelId.trim(),
-            "pubsub_perms": {
-                send: ["*"]
-            }
-        };
-        
-        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
-        var messageText = JSON.stringify(updates);
-    
-        // send PubSub message
-        var options = {
-            method: 'POST',
-            uri: 'https://api.twitch.tv/extensions/message/' + channelId.trim(),
-            auth: {
-                'bearer': signedToken
-            },
-            headers: {
-                "Client-ID": clientId
-            },
-            body: {
-                "content_type": "application/json",
-                "message": messageText,
-                "targets": ["broadcast"]
-            },
-            json: true // Automatically stringifies the body to JSON
-        };
-
-        return rp(options);        
+        // send first pubsub message to non-bits extension
+        return sendPubSubBroadcast(functions.config().twitch.key,
+                                   functions.config().twitch.id,
+                                   channelId,
+                                   updates);   
+    }).then((snapshot) => {
+        // wait one second to not exceed pubsub rate limit
+        return new Promise((resolve, reject) => {
+            setTimeout(resolve, 1000);
+        });
+    }).then((snapshot) => {
+        // send second pubsub message (for bits extension)
+        return sendPubSubBroadcast(functions.config().twitch.key2,
+                                   functions.config().twitch.id2,
+                                   channelId,
+                                   updates);  
     }).then((snapshot) => {
         return response.sendStatus(200);
     }).catch((err) => {
