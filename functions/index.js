@@ -9,6 +9,7 @@ const jwtHeaderName = "x-extension-jwt";
 const launchesRoot = "launches";
 const playersRoot = "players";
 const tokensRoot = "tokens";
+const upgradesRoot = "upgrades";
 
 admin.initializeApp();
 var db = admin.database();
@@ -290,6 +291,62 @@ exports.verifyToken = functions.https.onRequest((request, response) => {
     });
 });
 
+exports.deleteUpgrades = functions.https.onRequest((request, response) => {
+    // verify hash was given
+    var givenHash = request.header("Authorization");
+    if (givenHash === undefined || givenHash === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id.");
+        return response.status(400).send("Missing channel Id.");
+    }
+
+    // verify json is correct
+    if (request.body.hasOwnProperty('upgradeids') === false || request.body.upgradeids.constructor !== Array) { // check if we were sent an array
+        console.log("Sending status 400. Invalid JSON.");
+        console.log(request.body); // DEBUG
+        return response.status(400).send('Invalid JSON. Must be an array of upgrade ids.');
+    }
+
+    var upgradeIds = request.body.upgradeids;
+
+    // verify hash is valid
+    var hashRef = db.ref(`${tokensRoot}/${channelId}/hash`);
+    var upgradesRef = db.ref(`${upgradesRoot}/${channelId}`);
+    return hashRef.once('value').then((snapshot) => {
+        var hash = snapshot.val();
+        if (givenHash === hash) {
+            return upgradesRef.once('value');
+        }
+
+        throw new InvalidHashException();
+    }).then((snapshot) => { // hash is valid, delete upgrades
+        var updates = {};
+        for (var key in snapshot.val()) {
+            if (upgradeIds.indexOf(key) !== -1) {
+                updates[key] = null;
+            }
+        }
+
+        return upgradesRef.update(updates);
+    }).then((snapshot) => {
+        return response.sendStatus(200);
+    }).catch((err) => {
+        console.log(err.message);
+        if (err.message === "Invalid hash given.") {
+            return response.sendStatus(401);
+        }
+        else {
+            return response.sendStatus(500);
+        }
+    });
+});
+
 exports.deleteLaunches = functions.https.onRequest((request, response) => {
     // verify hash was given
     var givenHash = request.header("Authorization");
@@ -347,8 +404,6 @@ exports.deleteLaunches = functions.https.onRequest((request, response) => {
         }
 
         return launchesRef.update(updates);
-    }).then((snapshot) => {
-        return SendPlayAlertSMS(channelId);
     }).then((snapshot) => {
         return response.sendStatus(200);
     }).catch((err) => {
