@@ -10,6 +10,7 @@ const launchesRoot = "launches";
 const playersRoot = "players";
 const tokensRoot = "tokens";
 const upgradesRoot = "upgrades";
+const transactionsRoot = "transactions";
 
 admin.initializeApp();
 var db = admin.database();
@@ -74,13 +75,13 @@ var verifyJwt = function(token) {
     if (token === undefined) {
         return [false, 401, "Missing signed JWT."];
     }
-
+    
     var encodedKey = functions.config().twitch.key;
-
+    
     if (encodedKey === undefined) {
         return [false, 500, "Internal error."];
     }
-
+    
     var key = Buffer.from(encodedKey, 'base64');
     if (tryVerify(token, key) === false) {
         // first key failed, try with second key
@@ -88,7 +89,7 @@ var verifyJwt = function(token) {
         if (encodedKey2 === undefined) {
             return [false, 500, "Internal error."];
         }
-
+        
         key = Buffer.from(encodedKey2, 'base64');
         if (tryVerify(token, key) === false) {
             // both tokens failed
@@ -96,9 +97,77 @@ var verifyJwt = function(token) {
             return [false, 401, "Sending status 401. Could not verify JWT"];
         }
     }
-
+    
     return [true];
 };
+
+function sendPubSubBroadcast(encodedKey, clientId, channelId, payload) {
+        // send pubsub message with update
+        // generate and sign JWT
+        if (encodedKey === undefined || clientId === undefined) {
+            console.log("Sending status 500. Could not find twitch key or client ID");
+            throw new InternalServerErrorException();
+        }
+
+        var token = {
+            "exp": Date.now() + 60,
+            "role":"external",
+            "channel_id": channelId.trim(),
+            "pubsub_perms": {
+                send: ["*"]
+            }
+        };
+        
+        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
+        var messageText = JSON.stringify(payload);
+    
+        // send PubSub message
+        var options = {
+            method: 'POST',
+            uri: 'https://api.twitch.tv/extensions/message/' + channelId.trim(),
+            auth: {
+                'bearer': signedToken
+            },
+            headers: {
+                "Client-ID": clientId
+            },
+            body: {
+                "content_type": "application/json",
+                "message": messageText,
+                "targets": ["broadcast"]
+            },
+            json: true // Automatically stringifies the body to JSON
+        };
+
+        return rp(options); 
+}
+
+function generateUpgradeObj(transaction, playerId) {
+    var puckCount;
+    var target;
+    switch (transaction.product.sku) {
+        case 'get-100':
+            puckCount = 100;
+            target = playerId;
+            break;
+        case 'give-10-to-everyone':
+            puckCount = 10;
+            target = "all";
+            break;
+        case 'give-100-to-everyone':
+            puckCount = 100;
+            target = "all";
+            break;
+        default:
+            return undefined;
+    }
+
+    return {
+        puckCount: puckCount,
+        source: playerId,
+        target: target
+    };
+}
 
 exports.queueLaunch = functions.https.onRequest((request, response) => {
     // CORS
@@ -147,7 +216,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         }
     }
 
-    console.log("Received: " + JSON.stringify(launchData));
+    console.log("Received: " + JSON.stringify(launchData)); // DEBUG
 
     // update database, excluding launches that have 0 pucks or are undefined
     var launchPromises = [];
@@ -417,47 +486,6 @@ exports.deleteLaunches = functions.https.onRequest((request, response) => {
     });
 });
 
-function sendPubSubBroadcast(encodedKey, clientId, channelId, payload) {
-        // send pubsub message with update
-        // generate and sign JWT
-        if (encodedKey === undefined || clientId === undefined) {
-            console.log("Sending status 500. Could not find twitch key or client ID");
-            throw new InternalServerErrorException();
-        }
-
-        var token = {
-            "exp": Date.now() + 60,
-            "role":"external",
-            "channel_id": channelId.trim(),
-            "pubsub_perms": {
-                send: ["*"]
-            }
-        };
-        
-        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
-        var messageText = JSON.stringify(payload);
-    
-        // send PubSub message
-        var options = {
-            method: 'POST',
-            uri: 'https://api.twitch.tv/extensions/message/' + channelId.trim(),
-            auth: {
-                'bearer': signedToken
-            },
-            headers: {
-                "Client-ID": clientId
-            },
-            body: {
-                "content_type": "application/json",
-                "message": messageText,
-                "targets": ["broadcast"]
-            },
-            json: true // Automatically stringifies the body to JSON
-        };
-
-        return rp(options); 
-}
-
 exports.updateUsers = functions.https.onRequest((request, response) => {
     // verify hash was given
     var givenHash = request.header("Authorization");
@@ -660,4 +688,70 @@ exports.populateStoreItems = functions.https.onRequest((request, response) => {
         return response.set('Access-Control-Allow-Origin', '*')
             .status(500).send(reason);
     });
+});
+
+exports.logTransaction = functions.https.onRequest((request, response) => {
+        // CORS
+        if (request.method === 'OPTIONS') {
+            console.log("Sending status 200. CORS check successful."); // DEBUG
+            return response.set('Access-Control-Allow-Origin', '*')
+            .set('Access-Control-Allow-Methods', 'GET, POST')
+            .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
+            .status(200).send();
+        }
+    
+        // verify JWT
+        var verifyArr = verifyJwt(request.get(jwtHeaderName));
+        if(verifyArr[0] !== true) {
+            return response.status(verifyArr[1]).send(verifyArr[2]);
+        }
+    
+        // verify channel Id is given
+        var channelId = request.query.channelId;
+        if (channelId === undefined) {
+            console.log("Sending status 400. Missing channel Id."); // DEBUG
+            return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
+        }
+        channelId = channelId.trim();
+
+        // verify player Id is given
+        var playerId = request.query.playerId;
+        if (playerId === undefined) {
+            console.log("Sending status 400. Missing player Id."); // DEBUG
+            return response.status(400).send("Missing player Id");
+        }
+        playerId = playerId.trim();
+    
+        // verify json is correct
+        var transactionData = request.body;
+
+        if (transactionData === undefined ||
+            transactionData.product === undefined ||
+            transactionData.product.sku === undefined ||
+            transactionData.transactionId === undefined) {
+            console.log("Sending status 400. Malformed JSON."); // DEBUG
+            console.log(transactionData); // DEBUG DELETE THIS
+            return response.status(400).send("Malformed transaction JSON object.");
+        }
+
+        var upgradeObj = generateUpgradeObj(transactionData, playerId);
+
+        if (upgradeObj === undefined) {
+            console.log("Unable to generate upgrade object from transaction data.") // DEBUG
+            return response.sendStatus(500);
+        }
+
+        // store game update and store the transaction data
+        var transactionObj = transactionData;
+        transactionObj["time"] = Date.now();
+        var upgradesRef = db.ref(`${upgradesRoot}/${channelId.trim()}`);
+        var transactionsRef = db.ref(`${transactionsRoot}/${channelId}/${playerId}`);
+        return upgradesRef.push().set(upgradeObj).then((snapshot) => {
+            return transactionsRef.push().set(transactionObj);
+        }).then((snapshot) => {
+            return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
+        }).catch(reason => {
+            console.log(reason);
+            return response.sendStatus(500);
+        })
 });
