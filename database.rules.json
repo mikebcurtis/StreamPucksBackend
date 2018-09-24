@@ -9,6 +9,10 @@
         
       "players": {
         ".read": "true"
+      },
+
+      "upgrades": {
+        ".read": "true"
       }
   }
 }

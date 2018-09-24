@@ -6,10 +6,11 @@ const rp = require('request-promise');
 const md5 = require('js-md5');
 const twilio_client = require('twilio')(functions.config().twilio.sid, functions.config().twilio.auth);
 const jwtHeaderName = "x-extension-jwt";
-const collectionName = "twitchplaysballgame";
 const launchesRoot = "launches";
 const playersRoot = "players";
 const tokensRoot = "tokens";
+const upgradesRoot = "upgrades";
+const transactionsRoot = "transactions";
 
 admin.initializeApp();
 var db = admin.database();
@@ -22,7 +23,7 @@ function InternalServerErrorException() {
     this.message = "Server error.";
 }
 
-function SendPlayAlertSMS(channelId) {
+function SendPlayAlertSMS(channelId, gameMode) {
     if (channelId === undefined) {
         return new Promise((resolve, reject) => {
             resolve();
@@ -53,35 +54,125 @@ function SendPlayAlertSMS(channelId) {
     }
 
     // send sms
+    var bodyMessage = `Channel ${channelId} just started playing Stream Pucks.`;
+    if (gameMode !== undefined || gameMode !== "") {
+        bodyMessage = `Channel ${channelId} just started playing ${gameMode}.`;
+    }
+
     return twilio_client.messages.create({
-        body: `Channel ${channelId} just started playing Stream Pucks.`,
+        body: bodyMessage,
         from: functions.config().twilio.phone_from,
         to: functions.config().twilio.phone_to
     });
+}
+
+function tryVerify(token, key) {
+    try {
+        var verification = jwt.verify(token, key);
+        return true;
+    }
+    catch (err) {
+        return false;
+    }
 }
 
 var verifyJwt = function(token) {
     if (token === undefined) {
         return [false, 401, "Missing signed JWT."];
     }
-
+    
     var encodedKey = functions.config().twitch.key;
-
+    
     if (encodedKey === undefined) {
         return [false, 500, "Internal error."];
     }
-
+    
     var key = Buffer.from(encodedKey, 'base64');
-    try {
-        var verification = jwt.verify(token, key);
+    if (tryVerify(token, key) === false) {
+        // first key failed, try with second key
+        var encodedKey2 = functions.config().twitch.key2;
+        if (encodedKey2 === undefined) {
+            return [false, 500, "Internal error."];
+        }
+        
+        key = Buffer.from(encodedKey2, 'base64');
+        if (tryVerify(token, key) === false) {
+            // both tokens failed
+            console.log("Sending status 401. Could not verify JWT."); // DEBUG
+            return [false, 401, "Sending status 401. Could not verify JWT"];
+        }
     }
-    catch(err) {
-        console.log("Sending status 401. Could not verify JWT."); // DEBUG
-        return [false, 401, "Sending status 401. Could not verify JWT"];
-    }
-
+    
     return [true];
 };
+
+function sendPubSubBroadcast(encodedKey, clientId, channelId, payload) {
+        // send pubsub message with update
+        // generate and sign JWT
+        if (encodedKey === undefined || clientId === undefined) {
+            console.log("Sending status 500. Could not find twitch key or client ID");
+            throw new InternalServerErrorException();
+        }
+
+        var token = {
+            "exp": Date.now() + 60,
+            "role":"external",
+            "channel_id": channelId.trim(),
+            "pubsub_perms": {
+                send: ["*"]
+            }
+        };
+        
+        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
+        var messageText = JSON.stringify(payload);
+    
+        // send PubSub message
+        var options = {
+            method: 'POST',
+            uri: 'https://api.twitch.tv/extensions/message/' + channelId.trim(),
+            auth: {
+                'bearer': signedToken
+            },
+            headers: {
+                "Client-ID": clientId
+            },
+            body: {
+                "content_type": "application/json",
+                "message": messageText,
+                "targets": ["broadcast"]
+            },
+            json: true // Automatically stringifies the body to JSON
+        };
+
+        return rp(options); 
+}
+
+function generateUpgradeObj(transaction, playerId) {
+    var puckCount;
+    var target;
+    switch (transaction.product.sku) {
+        case 'get-100':
+            puckCount = 100;
+            target = playerId;
+            break;
+        case 'give-10-to-everyone':
+            puckCount = 10;
+            target = "all";
+            break;
+        case 'give-100-to-everyone':
+            puckCount = 100;
+            target = "all";
+            break;
+        default:
+            return undefined;
+    }
+
+    return {
+        puckCount: puckCount,
+        source: playerId,
+        target: target
+    };
+}
 
 exports.queueLaunch = functions.https.onRequest((request, response) => {
     // CORS
@@ -130,7 +221,7 @@ exports.queueLaunch = functions.https.onRequest((request, response) => {
         }
     }
 
-    console.log("Received: " + JSON.stringify(launchData));
+    console.log("Received: " + JSON.stringify(launchData)); // DEBUG
 
     // update database, excluding launches that have 0 pucks or are undefined
     var launchPromises = [];
@@ -274,6 +365,62 @@ exports.verifyToken = functions.https.onRequest((request, response) => {
     });
 });
 
+exports.deleteUpgrades = functions.https.onRequest((request, response) => {
+    // verify hash was given
+    var givenHash = request.header("Authorization");
+    if (givenHash === undefined || givenHash === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id.");
+        return response.status(400).send("Missing channel Id.");
+    }
+
+    // verify json is correct
+    if (request.body.hasOwnProperty('upgradeids') === false || request.body.upgradeids.constructor !== Array) { // check if we were sent an array
+        console.log("Sending status 400. Invalid JSON.");
+        console.log(request.body); // DEBUG
+        return response.status(400).send('Invalid JSON. Must be an array of upgrade ids.');
+    }
+
+    var upgradeIds = request.body.upgradeids;
+
+    // verify hash is valid
+    var hashRef = db.ref(`${tokensRoot}/${channelId}/hash`);
+    var upgradesRef = db.ref(`${upgradesRoot}/${channelId}`);
+    return hashRef.once('value').then((snapshot) => {
+        var hash = snapshot.val();
+        if (givenHash === hash) {
+            return upgradesRef.once('value');
+        }
+
+        throw new InvalidHashException();
+    }).then((snapshot) => { // hash is valid, delete upgrades
+        var updates = {};
+        for (var key in snapshot.val()) {
+            if (upgradeIds.indexOf(key) !== -1) {
+                updates[key] = null;
+            }
+        }
+
+        return upgradesRef.update(updates);
+    }).then((snapshot) => {
+        return response.sendStatus(200);
+    }).catch((err) => {
+        console.log(err.message);
+        if (err.message === "Invalid hash given.") {
+            return response.sendStatus(401);
+        }
+        else {
+            return response.sendStatus(500);
+        }
+    });
+});
+
 exports.deleteLaunches = functions.https.onRequest((request, response) => {
     // verify hash was given
     var givenHash = request.header("Authorization");
@@ -331,8 +478,6 @@ exports.deleteLaunches = functions.https.onRequest((request, response) => {
         }
 
         return launchesRef.update(updates);
-    }).then((snapshot) => {
-        return SendPlayAlertSMS(channelId);
     }).then((snapshot) => {
         return response.sendStatus(200);
     }).catch((err) => {
@@ -408,46 +553,22 @@ exports.updateUsers = functions.https.onRequest((request, response) => {
 
         throw new InvalidHashException();
     }).then((snapshot) => {
-        // send pubsub message with update
-        // generate and sign JWT
-        var encodedKey = functions.config().twitch.key;
-        var clientId = functions.config().twitch.id;
-        if (encodedKey === undefined || clientId === undefined) {
-            console.log("Sending status 500. Could not find twitch key or client ID");
-            throw new InternalServerErrorException();
-        }
-
-        var token = {
-            "exp": Date.now() + 60,
-            "role":"external",
-            "channel_id": channelId.trim(),
-            "pubsub_perms": {
-                send: ["*"]
-            }
-        };
-        
-        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
-        var messageText = JSON.stringify(updates);
-    
-        // send PubSub message
-        var options = {
-            method: 'POST',
-            uri: 'https://api.twitch.tv/extensions/message/' + channelId.trim(),
-            auth: {
-                'bearer': signedToken
-            },
-            headers: {
-                "Client-ID": clientId
-            },
-            body: {
-                "content_type": "application/json",
-                "message": messageText,
-                "targets": ["broadcast"]
-            },
-            json: true // Automatically stringifies the body to JSON
-        };
-
-        return rp(options);        
+        // send first pubsub message to non-bits extension
+        return sendPubSubBroadcast(functions.config().twitch.key,
+                                   functions.config().twitch.id,
+                                   channelId,
+                                   updates);   
+    }).then((snapshot) => {
+        // wait one second to not exceed pubsub rate limit
+        return new Promise((resolve, reject) => {
+            setTimeout(resolve, 1000);
+        });
+    }).then((snapshot) => {
+        // send second pubsub message (for bits extension)
+        return sendPubSubBroadcast(functions.config().twitch.key2,
+                                   functions.config().twitch.id2,
+                                   channelId,
+                                   updates);  
     }).then((snapshot) => {
         return response.sendStatus(200);
     }).catch((err) => {
@@ -571,5 +692,111 @@ exports.populateStoreItems = functions.https.onRequest((request, response) => {
     }).catch(reason => {
         return response.set('Access-Control-Allow-Origin', '*')
             .status(500).send(reason);
+    });
+});
+
+exports.logTransaction = functions.https.onRequest((request, response) => {
+        // CORS
+        if (request.method === 'OPTIONS') {
+            console.log("Sending status 200. CORS check successful."); // DEBUG
+            return response.set('Access-Control-Allow-Origin', '*')
+            .set('Access-Control-Allow-Methods', 'GET, POST')
+            .set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, x-extension-jwt')
+            .status(200).send();
+        }
+    
+        // verify JWT
+        var verifyArr = verifyJwt(request.get(jwtHeaderName));
+        if(verifyArr[0] !== true) {
+            return response.status(verifyArr[1]).send(verifyArr[2]);
+        }
+    
+        // verify channel Id is given
+        var channelId = request.query.channelId;
+        if (channelId === undefined) {
+            console.log("Sending status 400. Missing channel Id."); // DEBUG
+            return response.status(400).send("Missing channel Id."); // channel Id parameter is missing
+        }
+        channelId = channelId.trim();
+
+        // verify player Id is given
+        var playerId = request.query.playerId;
+        if (playerId === undefined) {
+            console.log("Sending status 400. Missing player Id."); // DEBUG
+            return response.status(400).send("Missing player Id");
+        }
+        playerId = playerId.trim();
+    
+        // verify json is correct
+        var transactionData = request.body;
+
+        if (transactionData === undefined ||
+            transactionData.product === undefined ||
+            transactionData.product.sku === undefined ||
+            transactionData.transactionId === undefined) {
+            console.log("Sending status 400. Malformed JSON."); // DEBUG
+            console.log(transactionData); // DEBUG DELETE THIS
+            return response.status(400).send("Malformed transaction JSON object.");
+        }
+
+        var upgradeObj = generateUpgradeObj(transactionData, playerId);
+
+        if (upgradeObj === undefined) {
+            console.log("Unable to generate upgrade object from transaction data.") // DEBUG
+            return response.sendStatus(500);
+        }
+
+        // store game update and store the transaction data
+        var transactionObj = transactionData;
+        transactionObj["time"] = Date.now();
+        var upgradesRef = db.ref(`${upgradesRoot}/${channelId.trim()}`);
+        var transactionsRef = db.ref(`${transactionsRoot}/${channelId}/${playerId}`);
+        return upgradesRef.push().set(upgradeObj).then((snapshot) => {
+            return transactionsRef.push().set(transactionObj);
+        }).then((snapshot) => {
+            return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
+        }).catch(reason => {
+            console.log(reason);
+            return response.sendStatus(500);
+        })
+});
+
+exports.levelStarted = functions.https.onRequest((request, response) => {
+    // verify hash was given
+    var givenHash = request.header("Authorization");
+    if (givenHash === undefined || givenHash === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id.");
+        return response.status(400).send("Missing channel Id.");
+    }
+
+    var gameMode = request.query.gameMode; // could be undefined
+
+    // verify hash is valid
+    var hashRef = db.ref(`${tokensRoot}/${channelId.trim()}/hash`);
+
+    return hashRef.once('value').then((snapshot) => {
+        var hash = snapshot.val();
+        if (givenHash === hash) {
+            return SendPlayAlertSMS(channelId, gameMode);
+        }
+
+        throw new InvalidHashException();
+    }).then((snapshot) => {
+        return response.sendStatus(200);
+    }).catch((err) => {
+        console.log(err.message);
+        if (err.message === "Invalid hash given.") {
+            return response.sendStatus(401);
+        }
+        else {
+            return response.sendStatus(500);
+        }
     });
 });
