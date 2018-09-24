@@ -23,7 +23,7 @@ function InternalServerErrorException() {
     this.message = "Server error.";
 }
 
-function SendPlayAlertSMS(channelId) {
+function SendPlayAlertSMS(channelId, gameMode) {
     if (channelId === undefined) {
         return new Promise((resolve, reject) => {
             resolve();
@@ -54,8 +54,13 @@ function SendPlayAlertSMS(channelId) {
     }
 
     // send sms
+    var bodyMessage = `Channel ${channelId} just started playing Stream Pucks.`;
+    if (gameMode !== undefined || gameMode !== "") {
+        bodyMessage = `Channel ${channelId} just started playing ${gameMode}.`;
+    }
+
     return twilio_client.messages.create({
-        body: `Channel ${channelId} just started playing Stream Pucks.`,
+        body: bodyMessage,
         from: functions.config().twilio.phone_from,
         to: functions.config().twilio.phone_to
     });
@@ -754,4 +759,44 @@ exports.logTransaction = functions.https.onRequest((request, response) => {
             console.log(reason);
             return response.sendStatus(500);
         })
+});
+
+exports.levelStarted = functions.https.onRequest((request, response) => {
+    // verify hash was given
+    var givenHash = request.header("Authorization");
+    if (givenHash === undefined || givenHash === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+
+    // verify channel Id is given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        console.log("Sending status 400. Missing channel Id.");
+        return response.status(400).send("Missing channel Id.");
+    }
+
+    var gameMode = request.query.gameMode; // could be undefined
+
+    // verify hash is valid
+    var hashRef = db.ref(`${tokensRoot}/${channelId.trim()}/hash`);
+
+    return hashRef.once('value').then((snapshot) => {
+        var hash = snapshot.val();
+        if (givenHash === hash) {
+            return SendPlayAlertSMS(channelId, gameMode);
+        }
+
+        throw new InvalidHashException();
+    }).then((snapshot) => {
+        return response.sendStatus(200);
+    }).catch((err) => {
+        console.log(err.message);
+        if (err.message === "Invalid hash given.") {
+            return response.sendStatus(401);
+        }
+        else {
+            return response.sendStatus(500);
+        }
+    });
 });
