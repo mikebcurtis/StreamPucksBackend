@@ -11,6 +11,7 @@ const playersRoot = "players";
 const tokensRoot = "tokens";
 const upgradesRoot = "upgrades";
 const transactionsRoot = "transactions";
+const bitsExtensionVersion = "0.0.2";
 
 admin.initializeApp();
 var db = admin.database();
@@ -147,21 +148,69 @@ function sendPubSubBroadcast(encodedKey, clientId, channelId, payload) {
         return rp(options); 
 }
 
+function trySendTransactionChatMessage(encodedKey, clientId, channelId, messageText) {
+    try {
+        return sendTransactionChatMessage(encodedKey, clientId, channelId, messageText);
+    }
+    catch (err) {
+        return undefined;
+    }
+}
+
+function sendTransactionChatMessage(encodedKey, clientId, channelId, messageText) {
+        // send chat message
+        // generate and sign JWT
+        if (encodedKey === undefined || clientId === undefined) {
+            console.log("Sending status 500. Could not find twitch key or client ID");
+            throw new InternalServerErrorException();
+        }
+
+        var token = {
+            "exp": Date.now() + 60,
+            "role":"external",
+            "user_id": channelId.trim(),
+            "channel_id": channelId.trim()
+        };
+        
+        var signedToken = jwt.sign(token, Buffer.from(encodedKey, 'base64'), { 'noTimestamp': true });
+
+        // send extension message
+        var options = {
+            method: 'POST',
+            uri: `https://api.twitch.tv/extensions/${clientId}/${bitsExtensionVersion}/channels/${channelId.trim()}/chat`,
+            // auth: {
+            //     'Bearer': signedToken
+            // },
+            headers: {
+                "Authorization": "Bearer " + signedToken,
+                "Client-ID": clientId,
+                "Content-Type": "application/json"
+            },
+            body: `{"text": "${messageText}"}`
+        };
+
+        return rp(options);     
+}
+
 function generateUpgradeObj(transaction, playerId) {
     var puckCount;
     var target;
+    var message;
     switch (transaction.product.sku) {
         case 'get-100':
             puckCount = 100;
             target = playerId;
+            message = `${transaction.displayName} used ${transaction.product.cost.amount} ${transaction.product.cost.type} to give everyone 100 pucks!`;
             break;
         case 'give-10-to-everyone':
             puckCount = 10;
             target = "all";
+            message = `${transaction.displayName} used ${transaction.product.cost.amount} ${transaction.product.cost.type} to give everyone 10 pucks!`;
             break;
         case 'give-100-to-everyone':
             puckCount = 100;
             target = "all";
+            message = `${transaction.displayName} used ${transaction.product.cost.amount} ${transaction.product.cost.type} to get 100 pucks!`;
             break;
         default:
             return undefined;
@@ -170,7 +219,8 @@ function generateUpgradeObj(transaction, playerId) {
     return {
         puckCount: puckCount,
         source: playerId,
-        target: target
+        target: target,
+        message: message
     };
 }
 
@@ -735,7 +785,7 @@ exports.logTransaction = functions.https.onRequest((request, response) => {
             transactionData.product.sku === undefined ||
             transactionData.transactionId === undefined) {
             console.log("Sending status 400. Malformed JSON."); // DEBUG
-            console.log(transactionData); // DEBUG DELETE THIS
+            console.log(transactionData); // DEBUG
             return response.status(400).send("Malformed transaction JSON object.");
         }
 
@@ -753,6 +803,19 @@ exports.logTransaction = functions.https.onRequest((request, response) => {
         var transactionsRef = db.ref(`${transactionsRoot}/${channelId}/${playerId}`);
         return upgradesRef.push().set(upgradeObj).then((snapshot) => {
             return transactionsRef.push().set(transactionObj);
+        }).then((snapshot) => {
+            // try to send a chat message indicating the purchase was made,
+            // but if it fails, don't block the purchase
+            var promise = trySendTransactionChatMessage(functions.config().twitch.key2,
+                                                        functions.config().twitch.id2,
+                                                        channelId,
+                                                        upgradeObj.message);
+            if (promise !== undefined) {
+                return promise;
+            }
+
+            console.log("WARNING failed to send bits purchase chat message.");
+            return Promise.resolve();
         }).then((snapshot) => {
             return response.set('Access-Control-Allow-Origin', '*').sendStatus(200);
         }).catch(reason => {
