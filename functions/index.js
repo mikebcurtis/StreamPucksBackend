@@ -200,7 +200,7 @@ function generateUpgradeObj(transaction, playerId) {
         case 'get-100':
             puckCount = 100;
             target = playerId;
-            message = `${transaction.displayName} used ${transaction.product.cost.amount} ${transaction.product.cost.type} to give everyone 100 pucks!`;
+            message = `${transaction.displayName} used ${transaction.product.cost.amount} ${transaction.product.cost.type} to get 100 pucks!`;
             break;
         case 'give-10-to-everyone':
             puckCount = 10;
@@ -210,7 +210,7 @@ function generateUpgradeObj(transaction, playerId) {
         case 'give-100-to-everyone':
             puckCount = 100;
             target = "all";
-            message = `${transaction.displayName} used ${transaction.product.cost.amount} ${transaction.product.cost.type} to get 100 pucks!`;
+            message = `${transaction.displayName} used ${transaction.product.cost.amount} ${transaction.product.cost.type} to give everyone 100 pucks!`;
             break;
         default:
             return undefined;
