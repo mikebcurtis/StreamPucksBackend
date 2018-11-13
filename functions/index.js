@@ -11,6 +11,7 @@ const playersRoot = "players";
 const tokensRoot = "tokens";
 const upgradesRoot = "upgrades";
 const transactionsRoot = "transactions";
+const twitchAuraRoute = "store/twitchaura/exclusiveTo";
 const bitsExtensionVersion = "0.0.2";
 
 admin.initializeApp();
@@ -861,5 +862,28 @@ exports.levelStarted = functions.https.onRequest((request, response) => {
         else {
             return response.sendStatus(500);
         }
+    });
+});
+
+exports.unlockTwitchConTrail = functions.https.onRequest((request, response) => {
+    // verify auth token
+    var givenKey = request.header("Authorization");
+    if (givenKey !== functions.config().twitch.key && givenKey !== functions.config().twitch.key2) {
+        return response.status(400).send("Missing Auth token");
+    }
+
+    // verify channel given
+    var channelId = request.query.channelId;
+    if (channelId === undefined) {
+        return response.status(400).send("Missing channel Id");
+    }
+
+    var trailRef = db.ref(`${twitchAuraRoute}/${channelId}`);
+
+    return trailRef.set(true).then((snapshot) => {
+        return response.sendStatus(200);
+    }).catch((err) => {
+        console.log(err);
+        return response.sendStatus(500);
     });
 });
