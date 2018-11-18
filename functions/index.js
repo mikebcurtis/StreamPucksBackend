@@ -12,6 +12,7 @@ const tokensRoot = "tokens";
 const upgradesRoot = "upgrades";
 const transactionsRoot = "transactions";
 const twitchAuraRoute = "store/twitchaura/exclusiveTo";
+const usageRoot = "usage";
 const bitsExtensionVersion = "0.0.2";
 
 admin.initializeApp();
@@ -25,47 +26,8 @@ function InternalServerErrorException() {
     this.message = "Server error.";
 }
 
-function SendPlayAlertSMS(channelId, gameMode) {
-    if (channelId === undefined) {
-        return new Promise((resolve, reject) => {
-            resolve();
-        });
-    }
-
-    // check if channel is blacklisted from alerts
-    var blacklist = JSON.parse(functions.config().twilio.blacklist);
-
-    if (blacklist === undefined) {
-        return new Promise((resolve, reject) => {
-            resolve();
-        });
-    }
-    
-    var blacklisted = false;
-    blacklist.some(channel => {
-        if(channel === channelId) {
-            blacklisted = true;
-        }
-        return blacklisted;
-    });
-
-    if (blacklisted) {
-        return new Promise((resolve, reject) => {
-            resolve();
-        });
-    }
-
-    // send sms
-    var bodyMessage = `Channel ${channelId} just started playing Stream Pucks.`;
-    if (gameMode !== undefined || gameMode !== "") {
-        bodyMessage = `Channel ${channelId} just started playing ${gameMode}.`;
-    }
-
-    return twilio_client.messages.create({
-        body: bodyMessage,
-        from: functions.config().twilio.phone_from,
-        to: functions.config().twilio.phone_to
-    });
+function verifyKeyHash(key, givenHash) {
+    return md5(key).toUpperCase() === givenHash.toUpperCase();
 }
 
 function tryVerify(token, key) {
@@ -844,11 +806,14 @@ exports.levelStarted = functions.https.onRequest((request, response) => {
 
     // verify hash is valid
     var hashRef = db.ref(`${tokensRoot}/${channelId.trim()}/hash`);
+    var usageRef = db.ref(`${usageRoute}/${channelId.trim()}`);
 
     return hashRef.once('value').then((snapshot) => {
         var hash = snapshot.val();
         if (givenHash === hash) {
-            return SendPlayAlertSMS(channelId, gameMode);
+            var usageObj = [];
+            usageObj[Date.now()] = gameMode;
+            return usageRef.set(usageObj);
         }
 
         throw new InvalidHashException();
@@ -865,11 +830,42 @@ exports.levelStarted = functions.https.onRequest((request, response) => {
     });
 });
 
+exports.getUsageData = functions.https.onRequest((request, response) => {
+    // verify hash
+    var givenHash = request.header("Authorization");
+    if (givenHash === undefined || givenHash === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+    
+    if (verifyKeyHash(functions.config().twitch.key, givenHash) === false && verifyKeyHash(functions.config().twitch.key2, givenHash) === false){
+        return response.status(400).send("Invalid Auth token");
+    }
+
+    var usageRoute = usageRoot;
+    var channelId = request.query.channelId;
+    if (channelId !== undefined && channelId !== "") {
+        usageRoute += "/" + channelId;
+    }
+
+    db.ref(usageRoute).once('value').then((snapshot) => {
+        return response.status(200).send(JSON.stringify(snapshot.val()));
+    }).catch((err) => {
+        console.log(err);
+        return response.sendStatus(500);
+    });
+});
+
 exports.unlockTwitchConTrail = functions.https.onRequest((request, response) => {
     // verify auth token
     var givenKey = request.header("Authorization");
-    if (givenKey !== functions.config().twitch.key && givenKey !== functions.config().twitch.key2) {
-        return response.status(400).send("Missing Auth token");
+    if (givenKey === undefined || givenHash === "") {
+        console.log("Sending status 400. Missing auth token.");
+        return response.status(400).send("Missing auth token.");
+    }
+
+    if (verifyKeyHash(functions.config().twitch.key, givenKey) === false && verifyKeyHash(functions.config().twitch.key2, givenKey) === false){
+        return response.status(400).send("Invalid Auth token");
     }
 
     // verify channel given
