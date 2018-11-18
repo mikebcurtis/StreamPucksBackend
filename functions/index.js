@@ -806,7 +806,7 @@ exports.levelStarted = functions.https.onRequest((request, response) => {
 
     // verify hash is valid
     var hashRef = db.ref(`${tokensRoot}/${channelId.trim()}/hash`);
-    var usageRef = db.ref(`${usageRoute}/${channelId.trim()}`);
+    var usageRef = db.ref(`${usageRoot}/${channelId.trim()}`);
 
     return hashRef.once('value').then((snapshot) => {
         var hash = snapshot.val();
